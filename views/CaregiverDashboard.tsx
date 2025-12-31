@@ -286,7 +286,6 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                 </div>
       </div>
 
-      {/* CONTENT: HOME VIEW */}
       {activeTab === 'home' && (
           <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gradient-to-br from-blue-50/30 via-white to-purple-50/30">
             {/* Welcome Header */}
