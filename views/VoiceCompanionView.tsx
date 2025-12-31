@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Volume2, Check, Clock, BellRing, Mic } from 'lucide-react';
-import { Reminder } from '../types';
+import { Reminder, Medicine, MedicineLog } from '../types';
+import { MedicineReminders } from './MedicineReminders';
 
 interface VoiceCompanionProps {
   userName: string;
@@ -10,6 +11,10 @@ interface VoiceCompanionProps {
   reminders: Reminder[];
   activeReminderId: string | null;
   onUpdateReminder: (id: string, status: Reminder['status']) => void;
+  medicines?: Medicine[];
+  medicineLogs?: MedicineLog[];
+  onMarkTaken?: (medicineId: string, scheduledTime: string) => void;
+  onSkipMedicine?: (medicineId: string, scheduledTime: string) => void;
 }
 
 export const VoiceCompanionView: React.FC<VoiceCompanionProps> = ({ 
@@ -19,7 +24,11 @@ export const VoiceCompanionView: React.FC<VoiceCompanionProps> = ({
   onListeningChange,
   reminders,
   activeReminderId,
-  onUpdateReminder
+  onUpdateReminder,
+  medicines = [],
+  medicineLogs = [],
+  onMarkTaken,
+  onSkipMedicine
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const recognitionRef = useRef<any>(null);
@@ -190,6 +199,18 @@ export const VoiceCompanionView: React.FC<VoiceCompanionProps> = ({
             <p className="text-sm text-gray-500 mt-1">Managed by {ownerName ? `${ownerName} (Caregiver)` : 'Household'}</p>
           </div>
       </div>
+
+      {/* Medicine Reminders Section */}
+            {medicines.length > 0 && onMarkTaken && onSkipMedicine && (
+                <div className="mb-8">
+                    <MedicineReminders 
+                        medicines={medicines}
+                        medicineLogs={medicineLogs}
+                        onMarkTaken={onMarkTaken}
+                        onSkip={onSkipMedicine}
+                    />
+                </div>
+            )}
 
       {/* Pending List */}
       <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Upcoming</h2>

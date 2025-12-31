@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { UserRole, AppStatus, SeniorStatus, ActivityItem, UserProfile, Reminder } from './types';
+import { UserRole, AppStatus, SeniorStatus, ActivityItem, UserProfile, Reminder, Medicine, MedicineLog } from './types';
 import { SeniorHome } from './views/SeniorHome';
 import { ProfileView } from './views/ProfileView';
 import { FallCountdown } from './views/FallCountdown';
@@ -12,6 +12,9 @@ import { ContactsView } from './views/ContactsView';
 import { SettingsView } from './views/SettingsView';
 import { VitalsView } from './views/VitalsView';
 import { VoiceCompanionView } from './views/VoiceCompanionView';
+import { MedicineManager } from './views/MedicineManager';
+import { MedicineReminders } from './views/MedicineReminders';
+import { MedicineCompliance } from './views/MedicineCompliance';
 import { BottomNav } from './components/BottomNav';
 import { INITIAL_SENIOR_STATUS } from './constants';
 import { useAppSensors } from './hooks/useAppSensors';
@@ -32,6 +35,7 @@ import {
   registerLockScreenSOSHandler,
   cleanupEmergencyShortcuts 
 } from './services/emergencyShortcuts';
+import { sanitizeForLog } from './utils/sanitize';
 
 const normalizePhone = (value: string) => value ? value.replace(/\D/g, '') : '';
 
@@ -133,6 +137,15 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('home');
   const [seniorStatus, setSeniorStatus] = useState<SeniorStatus>(INITIAL_SENIOR_STATUS);
   
+  // Listen for navigation to companion event
+  useEffect(() => {
+    const handleNavigateToCompanion = () => {
+      setActiveTab('voice');
+    };
+    window.addEventListener('navigateToCompanion', handleNavigateToCompanion);
+    return () => window.removeEventListener('navigateToCompanion', handleNavigateToCompanion);
+  }, []);
+  
   // Keep seniorStatus ref in sync
   useEffect(() => {
     seniorStatusRef.current = seniorStatus;
@@ -153,6 +166,10 @@ const App = () => {
   const [isListening, setIsListening] = useState(false);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [activeReminderId, setActiveReminderId] = useState<string | null>(null);
+  
+  // Medicine State
+  const [medicines, setMedicines] = useState<Medicine[]>([]);
+  const [medicineLogs, setMedicineLogs] = useState<MedicineLog[]>([]);
   
   // Household Members and Contacts
   const [householdMembers, setHouseholdMembers] = useState<HouseholdMember[]>([]);
@@ -192,7 +209,7 @@ const App = () => {
 
   const handleLookupCodeByPhone = async (phone: string): Promise<string | null> => {
     const normalized = normalizePhone(phone);
-    console.log('[LookupCodeByPhone] Starting lookup for phone:', normalized);
+    console.log('[LookupCodeByPhone] Starting lookup for phone:', sanitizeForLog(normalized));
     
     if (normalized.length !== 10) {
       console.log('[LookupCodeByPhone] Invalid phone length:', normalized.length);
@@ -210,7 +227,7 @@ const App = () => {
       
       if (phoneIndexSnap.exists()) {
         const code = phoneIndexSnap.val();
-        console.log('[LookupCodeByPhone] Code found in phoneIndex:', code);
+        console.log('[LookupCodeByPhone] Code found in phoneIndex:', sanitizeForLog(code));
         return code;
       }
       console.log('[LookupCodeByPhone] Not found in phoneIndex, searching all households...');
@@ -231,13 +248,13 @@ const App = () => {
               normalizePhone(m.phone) === normalized
             );
             if (matchingMember) {
-              console.log('[LookupCodeByPhone] Found member in household', householdCode, '- Name:', matchingMember.name);
+              console.log('[LookupCodeByPhone] Found member in household', sanitizeForLog(householdCode), '- Name:', sanitizeForLog(matchingMember.name));
               return householdCode;
             }
           }
         }
       }
-      console.log('[LookupCodeByPhone] No household code found for phone:', normalized);
+      console.log('[LookupCodeByPhone] No household code found for phone:', sanitizeForLog(normalized));
     } catch (e) {
       console.error('[Phone Lookup Error]', e);
     }
@@ -248,7 +265,7 @@ const App = () => {
 
   const handleSearchCaregiverByPhone = async (phone: string): Promise<{householdCode: string, profile: UserProfile} | null> => {
     const normalized = normalizePhone(phone);
-    console.log('[SearchCaregiverByPhone] Starting search for phone:', normalized);
+    console.log('[SearchCaregiverByPhone] Starting search for phone:', sanitizeForLog(normalized));
     
     if (normalized.length !== 10) {
       console.log('[SearchCaregiverByPhone] Invalid phone length:', normalized.length);
@@ -264,7 +281,7 @@ const App = () => {
       if (householdsSnap.exists()) {
         const households = householdsSnap.val();
         const householdCodes = Object.keys(households);
-        console.log('[SearchCaregiverByPhone] Found', householdCodes.length, 'households to search');
+        console.log('[SearchCaregiverByPhone] Found', sanitizeForLog(householdCodes.length), 'households to search');
         
         for (const householdCode of householdCodes) {
           const household = households[householdCode];
@@ -272,19 +289,19 @@ const App = () => {
           // Check members of this household
           if (household.members) {
             const members = Object.values(household.members) as HouseholdMember[];
-            console.log('[SearchCaregiverByPhone] Household', householdCode, 'has', members.length, 'members');
+            console.log('[SearchCaregiverByPhone] Household', sanitizeForLog(householdCode), 'has', sanitizeForLog(members.length), 'members');
             
             const caregiver = members.find((m: HouseholdMember) => {
               const memberPhone = normalizePhone(m.phone || '');
               const isMatch = memberPhone === normalized && m.role === UserRole.CAREGIVER;
               if (isMatch) {
-                console.log('[SearchCaregiverByPhone] MATCH FOUND! Member:', m.name, 'Phone:', memberPhone, 'Role:', m.role);
+                console.log('[SearchCaregiverByPhone] MATCH FOUND! Member:', sanitizeForLog(m.name), 'Phone:', sanitizeForLog(memberPhone), 'Role:', sanitizeForLog(m.role));
               }
               return isMatch;
             });
             
             if (caregiver) {
-              console.log('[SearchCaregiverByPhone] ✓ Found caregiver in household', householdCode, '- Name:', caregiver.name);
+              console.log('[SearchCaregiverByPhone] ✓ Found caregiver in household', sanitizeForLog(householdCode), '- Name:', sanitizeForLog(caregiver.name));
               return {
                 householdCode,
                 profile: {
@@ -301,7 +318,7 @@ const App = () => {
       } else {
         console.log('[SearchCaregiverByPhone] No households found in database');
       }
-      console.log('[SearchCaregiverByPhone] No caregiver found for phone:', normalized);
+      console.log('[SearchCaregiverByPhone] No caregiver found for phone:', sanitizeForLog(normalized));
     } catch (e) {
       console.error('[SearchCaregiverByPhone Error]', e);
     }
@@ -311,7 +328,7 @@ const App = () => {
 
   const handleCheckPhoneUsed = async (phone: string): Promise<boolean> => {
     const normalized = normalizePhone(phone);
-    console.log('[CheckPhoneUsed] Raw input:', phone, '-> Normalized:', normalized);
+    console.log('[CheckPhoneUsed] Raw input:', sanitizeForLog(phone), '-> Normalized:', sanitizeForLog(normalized));
     
     if (normalized.length !== 10) {
       console.log('[CheckPhoneUsed] Invalid phone length:', normalized.length);
@@ -325,7 +342,7 @@ const App = () => {
       console.log('[CheckPhoneUsed] Checking phoneIndex/${normalized}...');
       const phoneIndexSnap = await get(ref(db, `phoneIndex/${normalized}`));
       if (phoneIndexSnap.exists()) {
-        console.log('[CheckPhoneUsed] ✓ FOUND in phoneIndex:', phoneIndexSnap.val());
+        console.log('[CheckPhoneUsed] ✓ FOUND in phoneIndex:', sanitizeForLog(phoneIndexSnap.val()));
         return true;
       }
       console.log('[CheckPhoneUsed] ✗ Not in phoneIndex');
@@ -336,7 +353,7 @@ const App = () => {
       if (householdsSnap.exists()) {
         const households = householdsSnap.val();
         const householdCodes = Object.keys(households);
-        console.log('[CheckPhoneUsed] Scanning', householdCodes.length, 'households');
+        console.log('[CheckPhoneUsed] Scanning', sanitizeForLog(householdCodes.length), 'households');
         
         for (const householdCode of householdCodes) {
           const household = households[householdCode];
@@ -345,7 +362,7 @@ const App = () => {
             for (const member of members) {
               const memberPhone = normalizePhone(member.phone || '');
               if (memberPhone === normalized) {
-                console.log('[CheckPhoneUsed] ✓ FOUND in household', householdCode, '- Member:', member.name, 'Phone:', member.phone, '-> Normalized:', memberPhone);
+                console.log('[CheckPhoneUsed] ✓ FOUND in household', sanitizeForLog(householdCode), '- Member:', sanitizeForLog(member.name), 'Phone:', sanitizeForLog(member.phone), '-> Normalized:', sanitizeForLog(memberPhone));
                 return true;
               }
             }
@@ -353,7 +370,7 @@ const App = () => {
         }
       }
       
-      console.log('[CheckPhoneUsed] ✓ Phone', normalized, 'is AVAILABLE (not found anywhere)');
+      console.log('[CheckPhoneUsed] ✓ Phone', sanitizeForLog(normalized), 'is AVAILABLE (not found anywhere)');
       return false;
     } catch (e) {
       console.error('[CheckPhoneUsed] ERROR during check:', e);
@@ -1447,11 +1464,54 @@ const App = () => {
     return () => unsub();
   }, [householdId]);
 
+  // Subscribe to medicines
+  useEffect(() => {
+    if (!householdId) return;
+    const medicinesRef = ref(db, `households/${householdId}/medicines`);
+    const unsub = onValue(medicinesRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const medicinesList = Object.values(data).map((med: any) => ({
+          ...med,
+          startDate: new Date(med.startDate),
+          endDate: med.endDate ? new Date(med.endDate) : undefined,
+          createdAt: new Date(med.createdAt),
+          updatedAt: new Date(med.updatedAt),
+        })) as Medicine[];
+        setMedicines(medicinesList);
+      } else {
+        setMedicines([]);
+      }
+    });
+    return () => unsub();
+  }, [householdId]);
+
+  // Subscribe to medicine logs
+  useEffect(() => {
+    if (!householdId) return;
+    const logsRef = ref(db, `households/${householdId}/medicineLogs`);
+    const unsub = onValue(logsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const logsList = Object.values(data).map((log: any) => ({
+          ...log,
+          date: new Date(log.date),
+        })) as MedicineLog[];
+        console.log('[App] onValue medicineLogs received, count=', logsList.length);
+        setMedicineLogs(logsList);
+      } else {
+        console.log('[App] onValue medicineLogs received: empty');
+        setMedicineLogs([]);
+      }
+    });
+    return () => unsub();
+  }, [householdId]);
+
   // Multi-household support for caregivers - fetch senior info from all households
   useEffect(() => {
     if (role !== UserRole.CAREGIVER || householdIds.length === 0) return;
     
-    console.log('[App] Setting up multi-household listeners for:', householdIds);
+    console.log('[App] Setting up multi-household listeners for:', sanitizeForLog(householdIds.join(', ')));
     const unsubscribers: Array<() => void> = [];
     
     householdIds.forEach((hId) => {
@@ -1578,8 +1638,101 @@ const App = () => {
     addActivity('INFO', 'Emergency Cancelled', 'Marked safe by user');
   }, []);
 
+  // Medicine handlers
+  const handleAddMedicine = (medicine: Medicine) => {
+    const medicineId = Date.now().toString();
+    const newMedicine = { ...medicine, id: medicineId };
+    // Remove undefined values for Firebase
+    Object.keys(newMedicine).forEach(key => {
+      if (newMedicine[key as keyof Medicine] === undefined) {
+        delete newMedicine[key as keyof Medicine];
+      }
+    });
+    set(ref(db, `households/${householdId}/medicines/${medicineId}`), newMedicine);
+  };
+
+  const handleUpdateMedicine = (medicine: Medicine) => {
+    // Remove undefined values for Firebase
+    const cleanMedicine = { ...medicine };
+    Object.keys(cleanMedicine).forEach(key => {
+      if (cleanMedicine[key as keyof Medicine] === undefined) {
+        delete cleanMedicine[key as keyof Medicine];
+      }
+    });
+    set(ref(db, `households/${householdId}/medicines/${medicine.id}`), cleanMedicine);
+  };
+
+  const handleDeleteMedicine = (medicineId: string) => {
+    set(ref(db, `households/${householdId}/medicines/${medicineId}`), null);
+  };
+
+  const handleMarkTaken = (medicineId: string, scheduledTime: string) => {
+    if (!householdId) {
+      console.error('[handleMarkTaken] No householdId set, aborting');
+      return;
+    }
+    const medicine = medicines.find(m => m.id === medicineId);
+    if (!medicine) {
+      console.log('[handleMarkTaken] Medicine not found:', medicineId);
+      return;
+    }
+
+    const logId = `${medicineId}_${Date.now()}`;
+    const log: MedicineLog = {
+      id: logId,
+      medicineId,
+      medicineName: medicine.name,
+      dosage: medicine.dosage,
+      scheduledTime,
+      actualTime: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      status: 'TAKEN',
+      date: new Date(),
+    };
+    console.log('[handleMarkTaken] Writing log:', log);
+    set(ref(db, `households/${householdId}/medicineLogs/${logId}`), log)
+      .then(() => {
+        console.log('[handleMarkTaken] Write success:', logId);
+        setMedicineLogs(prev => [...prev, log]);
+      })
+      .catch((err) => {
+        console.error('[handleMarkTaken] Write failed:', err);
+      });
+  };
+
+  const handleSkipMedicine = (medicineId: string, scheduledTime: string) => {
+    if (!householdId) {
+      console.error('[handleSkipMedicine] No householdId set, aborting');
+      return;
+    }
+    const medicine = medicines.find(m => m.id === medicineId);
+    if (!medicine) {
+      console.log('[handleSkipMedicine] Medicine not found:', medicineId);
+      return;
+    }
+
+    const logId = `${medicineId}_${Date.now()}`;
+    const log: MedicineLog = {
+      id: logId,
+      medicineId,
+      medicineName: medicine.name,
+      dosage: medicine.dosage,
+      scheduledTime,
+      status: 'SKIPPED',
+      date: new Date(),
+    };
+    console.log('[handleSkipMedicine] Writing log:', log);
+    set(ref(db, `households/${householdId}/medicineLogs/${logId}`), log)
+      .then(() => {
+        console.log('[handleSkipMedicine] Write success:', logId);
+        setMedicineLogs(prev => [...prev, log]);
+      })
+      .catch((err) => {
+        console.error('[handleSkipMedicine] Write failed:', err);
+      });
+  };
+
   const handleSwitchHousehold = (newHouseholdId: string) => {
-    console.log('[App] Switching to household:', newHouseholdId);
+    console.log('[App] Switching to household:', sanitizeForLog(newHouseholdId));
     localStorage.setItem('safenest_active_household', newHouseholdId);
     localStorage.setItem('safenest_household_id', newHouseholdId);
     setActiveHouseholdId(newHouseholdId);
@@ -1588,6 +1741,8 @@ const App = () => {
     setHouseholdMembers([]);
     setContacts([]);
     setReminders([]);
+    setMedicines([]);
+    setMedicineLogs([]);
     setSeniorStatus(INITIAL_SENIOR_STATUS);
   };
 
@@ -1801,6 +1956,11 @@ const App = () => {
             householdIds={householdIds}
             onSwitchHousehold={handleSwitchHousehold}
             seniors={allHouseholdSeniors}
+            medicines={medicines}
+            medicineLogs={medicineLogs}
+            onAddMedicine={handleAddMedicine}
+            onUpdateMedicine={handleUpdateMedicine}
+            onDeleteMedicine={handleDeleteMedicine}
         />
       );
     }
@@ -1824,6 +1984,10 @@ const App = () => {
                 reminders={reminders}
                 activeReminderId={activeReminderId}
                 onUpdateReminder={handleUpdateReminderStatus}
+                medicines={medicines}
+                medicineLogs={medicineLogs}
+                onMarkTaken={handleMarkTaken}
+                onSkipMedicine={handleSkipMedicine}
             />
         );
       case 'vitals':
@@ -1847,6 +2011,10 @@ const App = () => {
               onToggleLocation={(val) => toggleSensor('location', val)}
               onToggleVoiceEmergency={(val) => toggleSensor('voice', val)}
               isVoiceEmergencyEnabled={isVoiceEmergencyEnabled}
+              medicines={medicines}
+              medicineLogs={medicineLogs}
+              onMarkTaken={handleMarkTaken}
+              onSkipMedicine={handleSkipMedicine}
             />
         );
     }

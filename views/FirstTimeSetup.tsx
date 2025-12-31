@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { UserRole, UserProfile } from '../types';
 import { User, Phone, Camera, AlertCircle } from 'lucide-react';
+import { sanitizeForLog, sanitizeForHTML } from '../utils/sanitize';
 
 interface FirstTimeSetupProps {
   onComplete: (profile: UserProfile, role: UserRole) => void;
@@ -269,7 +270,7 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
       if (onSearchCaregiverByPhone) {
         const result = await onSearchCaregiverByPhone(digits);
         if (result) {
-          console.log('[CaregiverLookup] Found:', result.profile.name, 'in household:', result.householdCode);
+          console.log('[CaregiverLookup] Found:', sanitizeForLog(result.profile.name), 'in household:', sanitizeForLog(result.householdCode));
           const cgProfile: UserProfile = {
             id: result.profile.id,
             name: result.profile.name,

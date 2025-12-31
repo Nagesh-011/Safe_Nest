@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Settings, Phone, Navigation, Battery, Layers, Map as MapIcon, ChevronUp, ChevronDown } from 'lucide-react';
 import { SeniorStatus, ActivityItem, HouseholdMember, UserRole } from '../types';
+import { sanitizeForLog, sanitizeForHTML, isValidImageUrl } from '../utils/sanitize';
 
 // Declare Leaflet globally
 declare var L: any;
@@ -95,7 +96,7 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
       if (!mapContainerRef.current) return;
       
       try {
-        console.log('[LocationView] Initializing map with location:', status.location.lat, status.location.lng);
+        console.log('[LocationView] Initializing map with location:', sanitizeForLog(status.location.lat), sanitizeForLog(status.location.lng));
         
         // Create Map with light background
         const map = L.map(mapContainerRef.current, {
@@ -137,6 +138,11 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
 
         // Create Custom Avatar Icon
         const createIcon = (isAlert: boolean) => {
+          const defaultAvatar = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNFNUU3RUIiLz48Y2lyY2xlIGN4PSI1MCIgY3k9IjM1IiByPSIxNSIgZmlsbD0iIzlDQTNCNCIvPjxwYXRoIGQ9Ik0yMCA4NUMyMCA2NS4xMTggMzMuNDMxNSA1MCA1MCA1MEM2Ni41Njg1IDUwIDgwIDY1LjExOCA4MCA4NVYxMDBIMjBWODVaIiBmaWxsPSIjOUNBM0I0Ii8+PC9zdmc+';
+          const avatarUrl = seniorProfile?.avatar && isValidImageUrl(seniorProfile.avatar) 
+            ? sanitizeForHTML(seniorProfile.avatar) 
+            : defaultAvatar;
+          
           return L.divIcon({
             className: 'custom-pin',
             html: `
@@ -144,7 +150,7 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
                 <div class="absolute w-full h-full rounded-full ${isAlert ? 'bg-red-500' : 'bg-blue-500'} opacity-30 animate-ping"></div>
                 <div class="absolute w-12 h-12 rounded-full ${isAlert ? 'bg-red-500' : 'bg-blue-500'} opacity-20 animate-pulse"></div>
                 <div class="relative w-10 h-10 bg-white rounded-full border-2 ${isAlert ? 'border-red-500' : 'border-white'} shadow-lg overflow-hidden">
-                  <img src="${seniorProfile?.avatar || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNFNUU3RUIiLz48Y2lyY2xlIGN4PSI1MCIgY3k9IjM1IiByPSIxNSIgZmlsbD0iIzlDQTNCNCIvPjxwYXRoIGQ9Ik0yMCA4NUMyMCA2NS4xMTggMzMuNDMxNSA1MCA1MCA1MEM2Ni41Njg1IDUwIDgwIDY1LjExOCA4MCA4NVYxMDBIMjBWODVaIiBmaWxsPSIjOUNBM0I0Ii8+PC9zdmc+'}" class="w-full h-full object-cover" />
+                  <img src="${avatarUrl}" class="w-full h-full object-cover" />
                 </div>
               </div>
             `,
@@ -218,49 +224,49 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 relative w-full">
-      {/* Navbar overlay */}
-      <div className="absolute top-0 left-0 right-0 z-40 px-4 py-4 flex items-center justify-between pointer-events-none">
-        <button className="p-2 bg-white/90 backdrop-blur-sm rounded-full shadow-sm pointer-events-auto hover:bg-white transition-colors">
+    <div className="flex flex-col h-screen bg-gray-50 w-full">
+      {/* Top Navbar - Fixed height */}
+      <div className="h-24 px-4 py-4 flex items-center justify-between bg-white border-b border-gray-100 shrink-0 z-50">
+        <button className="p-2 bg-gray-100 rounded-full shadow-sm hover:bg-gray-200 transition-colors">
            <svg className="w-6 h-6 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
         
-        <div className="flex flex-col items-center pointer-events-auto">
-             <span className="font-bold text-gray-900 bg-white/90 backdrop-blur-sm px-4 py-1.5 rounded-full shadow-sm">
-                My Location
-            </span>
+        <div className="flex flex-col items-center">
+             <span className="font-bold text-gray-900">My Location</span>
              {/* GPS Signal Indicator */}
-             <div className="mt-2 flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-full">
+             <div className="mt-1 flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded-full">
                 <div className={`w-2 h-2 rounded-full ${status.location.address === 'GPS Signal Weak' ? 'bg-red-400' : 'bg-green-400 animate-pulse'}`}></div>
-                <span className="text-[10px] text-white font-medium">{status.location.address === 'GPS Signal Weak' ? 'Weak Signal' : 'Live GPS'}</span>
+                <span className="text-[10px] text-gray-700 font-medium">{status.location.address === 'GPS Signal Weak' ? 'Weak Signal' : 'Live GPS'}</span>
              </div>
         </div>
 
-        <button 
-            onClick={() => setMapType('street')}
-            className={`p-2 rounded-full shadow-sm pointer-events-auto transition-colors ${mapType === 'street' ? 'bg-blue-500 text-white' : 'bg-white/90 backdrop-blur-sm text-gray-700 hover:bg-white'}`}
-            title="Territorial Map"
-        >
-          <MapIcon size={20} />
-        </button>
+        <div className="flex gap-2">
+          <button 
+              onClick={() => setMapType('street')}
+              className={`p-2 rounded-full shadow-sm transition-colors ${mapType === 'street' ? 'bg-blue-500 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}
+              title="Territorial Map"
+          >
+            <MapIcon size={20} />
+          </button>
 
-        <button 
-            onClick={() => setMapType('satellite')}
-            className={`p-2 rounded-full shadow-sm pointer-events-auto transition-colors ${mapType === 'satellite' ? 'bg-blue-500 text-white' : 'bg-white/90 backdrop-blur-sm text-gray-700 hover:bg-white'}`}
-            title="Satellite Map"
-        >
-          <Layers size={20} />
-        </button>
+          <button 
+              onClick={() => setMapType('satellite')}
+              className={`p-2 rounded-full shadow-sm transition-colors ${mapType === 'satellite' ? 'bg-blue-500 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}
+              title="Satellite Map"
+          >
+            <Layers size={20} />
+          </button>
+        </div>
       </div>
 
-      {/* Map Layer */}
-      <div className="flex-1 relative bg-blue-100 w-full" style={{ height: 'calc(100% - 160px)' }}>
-         <div ref={mapContainerRef} className="absolute inset-0 w-full h-full outline-none" style={{ background: '#e8f4f8', height: '100%', width: '100%' }} />
+      {/* Map - Takes remaining space */}
+      <div className="flex-1 relative w-full bg-white overflow-hidden">
+        <div ref={mapContainerRef} className="w-full h-full" />
       </div>
 
       {/* Bottom Information Card (Collapsible) */}
       <div 
-        className={`absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-[0_-5px_30px_rgba(0,0,0,0.15)] z-40 transition-all duration-300 ease-in-out flex flex-col ${isPanelExpanded ? 'h-[75%]' : 'h-[160px]'}`}
+        className={`bg-white border-t border-gray-100 transition-all duration-300 ease-in-out flex flex-col shrink-0 ${isPanelExpanded ? 'flex-1' : 'h-40'}`}
       >
           {/* Drag Handle Area */}
           <div 

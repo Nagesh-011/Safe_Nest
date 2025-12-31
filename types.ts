@@ -94,3 +94,42 @@ export interface HouseholdMember {
   phone: string;
   joinedAt: string;
 }
+
+// ===== MEDICINE MANAGEMENT =====
+export interface Medicine {
+  id: string;
+  name: string; // e.g., "Aspirin", "Metformin"
+  dosage: string; // e.g., "2 tablets", "5ml syrup"
+  frequency: number; // 1, 2, 3, 4 times daily
+  times: string[]; // ["08:00", "13:00", "20:00"] - 24hr format
+  timeLabels?: string[]; // ["Breakfast", "Lunch", "Dinner"] - optional friendly names
+  startDate: Date;
+  endDate?: Date; // Optional - if null, it's ongoing
+  durationDays?: number; // e.g., 30, 60 - calculated from start and end
+  isOngoing: boolean; // true if no end date
+  instructions: string; // e.g., "After food", "With water"
+  doctorName?: string;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface MedicineLog {
+  id: string;
+  medicineId: string;
+  medicineName: string;
+  dosage: string;
+  scheduledTime: string; // Time it was supposed to be taken
+  actualTime?: string; // When it was actually taken
+  status: 'PENDING' | 'TAKEN' | 'MISSED' | 'SKIPPED';
+  date: Date;
+  notes?: string;
+}
+
+export interface MedicineHistory {
+  medicineId: string;
+  medicineName: string;
+  logs: MedicineLog[];
+  compliancePercentage: number; // 0-100
+  mostMissedTime?: string; // Time most often missed
+}

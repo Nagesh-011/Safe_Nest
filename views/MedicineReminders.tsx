@@ -1,0 +1,211 @@
+import React, { useState, useEffect } from 'react';
+import { Pill, Clock, CheckCircle, X, AlertCircle } from 'lucide-react';
+import { Medicine, MedicineLog } from '../types';
+
+interface MedicineRemindersProps {
+  medicines: Medicine[];
+  onMarkTaken: (medicineId: string, time: string) => void;
+  onSkip: (medicineId: string, time: string) => void;
+  medicineLogs: MedicineLog[];
+}
+
+export const MedicineReminders: React.FC<MedicineRemindersProps> = ({
+  medicines,
+  onMarkTaken,
+  onSkip,
+  medicineLogs,
+}) => {
+  const [todaysMedicines, setTodaysMedicines] = useState<
+    Array<{
+      medicine: Medicine;
+      time: string;
+      status: 'PENDING' | 'TAKEN' | 'MISSED' | 'SKIPPED';
+      timeIndex: number;
+    }>
+  >([]);
+
+  useEffect(() => {
+    // Calculate today's medicines
+    const today = new Date().toDateString();
+    const medicines_for_today: typeof todaysMedicines = [];
+
+    medicines.forEach((medicine) => {
+      const startDate = new Date(medicine.startDate).toDateString();
+      const endDate = medicine.endDate ? new Date(medicine.endDate).toDateString() : null;
+      const todayDate = new Date().toDateString();
+
+      // Check if medicine is active today
+      if (startDate <= todayDate && (!endDate || endDate >= todayDate)) {
+        medicine.times.forEach((time, timeIndex) => {
+          // Check log for this medicine dose
+          const log = medicineLogs.find(
+            (l) => l.medicineId === medicine.id && l.date.toDateString() === todayDate && l.scheduledTime === time
+          );
+
+          medicines_for_today.push({
+            medicine,
+            time,
+            status: log?.status || 'PENDING',
+            timeIndex,
+          });
+        });
+      }
+    });
+
+    // Sort by time
+    medicines_for_today.sort((a, b) => a.time.localeCompare(b.time));
+    setTodaysMedicines(medicines_for_today);
+  }, [medicines, medicineLogs]);
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'TAKEN':
+        return 'bg-green-50 border-green-200';
+      case 'MISSED':
+        return 'bg-red-50 border-red-200';
+      case 'SKIPPED':
+        return 'bg-orange-50 border-orange-200';
+      default:
+        return 'bg-blue-50 border-blue-200';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'TAKEN':
+        return <CheckCircle size={24} className="text-green-600" />;
+      case 'MISSED':
+        return <AlertCircle size={24} className="text-red-600" />;
+      case 'SKIPPED':
+        return <X size={24} className="text-orange-600" />;
+      default:
+        return <Clock size={24} className="text-blue-600" />;
+    }
+  };
+
+  const getTimeRemaining = (time: string) => {
+    const [hours, minutes] = time.split(':').map(Number);
+    const medicineTime = new Date();
+    medicineTime.setHours(hours, minutes, 0, 0);
+
+    const now = new Date();
+    const diffMs = medicineTime.getTime() - now.getTime();
+
+    if (diffMs < 0) return 'Time passed';
+
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (diffHours > 0) return `${diffHours}h ${diffMins}m`;
+    return `${diffMins}m`;
+  };
+
+  const completionRate = todaysMedicines.length > 0
+    ? Math.round(
+        (todaysMedicines.filter((m) => m.status === 'TAKEN').length / todaysMedicines.length) * 100
+      )
+    : 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <Pill size={20} className="text-purple-600" />
+        <h2 className="text-lg font-semibold text-gray-900">Today's Medicines</h2>
+      </div>
+
+      {/* Completion Indicator */}
+      {todaysMedicines.length > 0 && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold text-gray-700">
+              {todaysMedicines.filter((m) => m.status === 'TAKEN').length} of {todaysMedicines.length} taken
+            </span>
+            <span className="text-xl font-bold text-purple-600">{completionRate}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div
+              className="bg-gradient-to-r from-purple-500 to-blue-500 h-2 rounded-full transition-all"
+              style={{ width: `${completionRate}%` }}
+            ></div>
+          </div>
+        </div>
+      )}
+
+      {/* Medicines List */}
+      {todaysMedicines.length === 0 ? (
+        <div className="bg-white rounded-2xl p-6 text-center border border-gray-100 shadow-sm">
+          <Pill size={40} className="mx-auto mb-3 text-gray-300" />
+          <p className="text-sm text-gray-600 font-semibold">No medicines scheduled for today</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {todaysMedicines.map((item, idx) => (
+            <div
+              key={`${item.medicine.id}-${item.time}-${idx}`}
+              className={`rounded-2xl p-4 border shadow-sm transition-all ${getStatusColor(item.status)}`}
+            >
+              <div className="flex items-start gap-3">
+                {/* Status Icon */}
+                <div className="flex-shrink-0">{getStatusIcon(item.status)}</div>
+
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                  {/* Time & Medicine Name */}
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <div>
+                      <p className="text-xs font-bold text-gray-600 uppercase">{item.time}</p>
+                      <h3 className="text-base font-bold text-gray-900">{item.medicine.name}</h3>
+                    </div>
+                    {item.status === 'PENDING' && (
+                      <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
+                        {getTimeRemaining(item.time)}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Dosage */}
+                  <p className="text-sm font-semibold text-gray-700 mb-1">{item.medicine.dosage}</p>
+
+                  {/* Instructions */}
+                  {item.medicine.instructions && (
+                    <p className="text-xs text-gray-600 italic mb-2">
+                      💡 {item.medicine.instructions}
+                    </p>
+                  )}
+
+                  {/* Status Text */}
+                  {item.status !== 'PENDING' && (
+                    <p className="text-xs font-semibold mb-2">
+                      {item.status === 'TAKEN' && '✓ Marked as taken'}
+                      {item.status === 'MISSED' && '⚠️ Missed'}
+                      {item.status === 'SKIPPED' && '— Skipped'}
+                    </p>
+                  )}
+
+                  {/* Action Buttons - Only show for PENDING */}
+                  {item.status === 'PENDING' && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { console.log('[MedicineReminders] onMarkTaken click', item.medicine.id, item.time); onMarkTaken(item.medicine.id, item.time); }}
+                        className="flex-1 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors shadow-sm"
+                      >
+                        ✓ Taken
+                      </button>
+                      <button
+                        onClick={() => { console.log('[MedicineReminders] onSkip click', item.medicine.id, item.time); onSkip(item.medicine.id, item.time); }}
+                        className="flex-1 py-2 border-2 border-orange-300 text-orange-700 text-sm font-semibold rounded-lg hover:bg-orange-50 transition-colors"
+                      >
+                        Skip
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import { Heart, Activity, MapPin, Zap, LogOut, Mic } from 'lucide-react';
-import { SeniorStatus, UserProfile } from '../types';
+import { Heart, Activity, MapPin, Zap, LogOut, Mic, Pill } from 'lucide-react';
+import { SeniorStatus, UserProfile, Medicine, MedicineLog } from '../types';
+import { MedicineReminders } from './MedicineReminders';
 import { useLanguage } from '../i18n/LanguageContext';
 
 declare var L: any;
@@ -17,6 +18,10 @@ interface SeniorHomeProps {
   onToggleLocation: (enabled: boolean) => void;
   onToggleVoiceEmergency?: (enabled: boolean) => void;
   isVoiceEmergencyEnabled?: boolean;
+  medicines?: Medicine[];
+  medicineLogs?: MedicineLog[];
+  onMarkTaken?: (medicineId: string, scheduledTime: string) => void;
+  onSkipMedicine?: (medicineId: string, scheduledTime: string) => void;
 }
 
 export const SeniorHome: React.FC<SeniorHomeProps> = ({ 
@@ -30,7 +35,11 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
   onToggleFallDetection,
   onToggleLocation,
   onToggleVoiceEmergency,
-  isVoiceEmergencyEnabled = false
+  isVoiceEmergencyEnabled = false,
+  medicines = [],
+  medicineLogs = [],
+  onMarkTaken,
+  onSkipMedicine
 }) => {
   const { t } = useLanguage();
   useEffect(() => {
@@ -265,6 +274,18 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Medicine Reminder Card - Direct Actions */}
+      {medicines.length > 0 && (
+        <div className="mt-6">
+          <MedicineReminders
+            medicines={medicines}
+            medicineLogs={medicineLogs || []}
+            onMarkTaken={onMarkTaken || (() => {})}
+            onSkip={onSkipMedicine || (() => {})}
+          />
+        </div>
+      )}
     </div>
   );
 };

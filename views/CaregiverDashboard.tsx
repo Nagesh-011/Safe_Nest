@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Phone, Navigation, Battery, Heart, Layers, Plus, CheckCircle, XCircle, Clock, LogOut, Map as MapIcon, Pill, Activity, Calendar, Bell, Home, Settings, MapPin } from 'lucide-react';
-import { SeniorStatus, ActivityItem, Reminder, HouseholdMember, UserRole } from '../types';
+import { SeniorStatus, ActivityItem, Reminder, HouseholdMember, UserRole, Medicine, MedicineLog } from '../types';
 import { BottomNav } from '../components/BottomNav';
+import { MedicineManager } from './MedicineManager';
+import { MedicineCompliance } from './MedicineCompliance';
 
 declare var L: any;
 
@@ -12,12 +14,17 @@ interface CaregiverDashboardProps {
   reminders: Reminder[];
   onAddReminder: (reminder: Reminder) => void;
   senior?: HouseholdMember;
-    onSignOut?: () => void;
-    onJoinAnotherHousehold?: () => void;
-    householdId?: string;
-    householdIds?: string[];
-    onSwitchHousehold?: (householdId: string) => void;
-    seniors?: { [householdId: string]: HouseholdMember };
+  onSignOut?: () => void;
+  onJoinAnotherHousehold?: () => void;
+  householdId?: string;
+  householdIds?: string[];
+  onSwitchHousehold?: (householdId: string) => void;
+  seniors?: { [householdId: string]: HouseholdMember };
+  medicines?: Medicine[];
+  medicineLogs?: MedicineLog[];
+  onAddMedicine?: (medicine: Medicine) => void;
+  onUpdateMedicine?: (medicine: Medicine) => void;
+  onDeleteMedicine?: (medicineId: string) => void;
 }
 
 export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ 
@@ -32,13 +39,18 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
     householdId,
     householdIds = [],
     onSwitchHousehold,
-    seniors = {}
+    seniors = {},
+    medicines = [],
+    medicineLogs = [],
+    onAddMedicine,
+    onUpdateMedicine,
+    onDeleteMedicine
 }) => {
   useEffect(() => {
     console.log('[CaregiverDashboard] onSignOut:', typeof onSignOut);
   }, [onSignOut]);
 
-  const [activeTab, setActiveTab] = useState<'home' | 'map' | 'schedule' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'map' | 'schedule' | 'medicine' | 'compliance' | 'settings'>('home');
   const [showAddModal, setShowAddModal] = useState(false);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
   const [selectedSeniorId, setSelectedSeniorId] = useState<string | null>(null);
@@ -196,14 +208,14 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {allSeniors.map((sen) => (
+            {allSeniors.map((sen: HouseholdMember) => (
               <button
                 key={sen.id}
                 onClick={() => {
                   setSelectedSeniorId(sen.id);
                   if (onSwitchHousehold) {
                     // Find the household ID for this senior
-                    const householdIdForSenior = Object.entries(seniors || {}).find(([_, s]) => s.id === sen.id)?.[0];
+                    const householdIdForSenior = Object.entries(seniors || {}).find(([_, s]) => (s as HouseholdMember).id === sen.id)?.[0];
                     if (householdIdForSenior) {
                       onSwitchHousehold(householdIdForSenior);
                     }
@@ -241,7 +253,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 relative pb-24">
+    <div className="flex flex-col h-screen bg-gray-50 relative pb-24 w-full">
       
       {/* Header */}
             <div className={`shadow-sm px-4 py-4 flex items-center justify-between z-[50] bg-white flex-shrink-0`}>
@@ -418,7 +430,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
             </div>
 
             {/* Upcoming Medications */}
-            {reminders.length > 0 && (
+            {(reminders.length > 0 || medicines.length > 0) && (
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-bold text-gray-900 flex items-center gap-2">
@@ -433,7 +445,55 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                   </button>
                 </div>
                 <div className="space-y-3">
-                  {reminders.slice(0, 4).map((reminder) => (
+                  {/* Show medicine reminders with real-time status from logs */}
+                  {medicines.slice(0, 4).map((medicine) => {
+                    const today = new Date().toDateString();
+                    return medicine.times.map((time, timeIndex) => {
+                      // Check if this medicine dose was taken/skipped today
+                      const log = medicineLogs.find(
+                        (l) => l.medicineId === medicine.id && 
+                               l.date.toDateString() === today && 
+                               l.scheduledTime === time
+                      );
+                      const status = log?.status || 'PENDING';
+                      
+                      return (
+                        <div key={`${medicine.id}-${time}`} className="flex items-center gap-4 p-4 bg-gradient-to-r from-purple-50 to-transparent rounded-xl border border-purple-100">
+                          <div className="flex-shrink-0 w-16 h-16 bg-purple-100 rounded-xl flex flex-col items-center justify-center">
+                            <p className="text-lg font-bold text-purple-600">{time.split(':')[0]}</p>
+                            <p className="text-xs text-purple-600">{time.split(':')[1]}</p>
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-bold text-gray-900">{medicine.name}</p>
+                            <p className="text-xs text-gray-500 mt-0.5">{medicine.dosage}</p>
+                          </div>
+                          <div>
+                            {status === 'TAKEN' && (
+                              <div className="flex flex-col items-center gap-1">
+                                <CheckCircle size={24} className="text-green-500" />
+                                <span className="text-[10px] font-bold text-green-600">Taken</span>
+                              </div>
+                            )}
+                            {status === 'SKIPPED' && (
+                              <div className="flex flex-col items-center gap-1">
+                                <XCircle size={24} className="text-orange-500" />
+                                <span className="text-[10px] font-bold text-orange-600">Skipped</span>
+                              </div>
+                            )}
+                            {status === 'PENDING' && (
+                              <div className="flex flex-col items-center gap-1">
+                                <Clock size={24} className="text-gray-400" />
+                                <span className="text-[10px] font-bold text-gray-500">Pending</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    });
+                  }).flat().slice(0, 4)}
+                  
+                  {/* Fallback to old reminders if no medicines */}
+                  {medicines.length === 0 && reminders.slice(0, 4).map((reminder) => (
                     <div key={reminder.id} className="flex items-center gap-4 p-4 bg-gradient-to-r from-purple-50 to-transparent rounded-xl border border-purple-100">
                       <div className="flex-shrink-0 w-16 h-16 bg-purple-100 rounded-xl flex flex-col items-center justify-center">
                         <p className="text-lg font-bold text-purple-600">{reminder.time.split(':')[0]}</p>
@@ -494,7 +554,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
 
       {/* CONTENT: MAP VIEW */}
       {activeTab === 'map' && (
-          <div className="flex-1 relative overflow-hidden bg-gray-200">
+          <div className="flex-1 relative overflow-hidden bg-white w-full">
             <div ref={mapContainerRef} className="absolute inset-0 w-full h-full outline-none z-0" />
             
             {/* Map Type Toggle Buttons */}
@@ -626,6 +686,43 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
           </div>
       )}
 
+      {/* CONTENT: MEDICINE MANAGER */}
+      {activeTab === 'medicine' && (
+          <div className="flex-1 overflow-y-auto">
+            {onAddMedicine && onUpdateMedicine && onDeleteMedicine && (
+              <MedicineManager 
+                medicines={medicines}
+                onAddMedicine={onAddMedicine}
+                onUpdateMedicine={onUpdateMedicine}
+                onDeleteMedicine={onDeleteMedicine}
+              />
+            )}
+          </div>
+      )}
+
+      {/* CONTENT: COMPLIANCE ANALYTICS */}
+      {activeTab === 'compliance' && (
+          <div className="flex-1 overflow-y-auto">
+            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
+              <p className="text-sm text-yellow-800">Debug: Medicines: {medicines.length}, Logs: {medicineLogs.length}</p>
+            </div>
+            {medicines.length > 0 && (
+              <MedicineCompliance 
+                medicines={medicines}
+                medicineLogs={medicineLogs}
+              />
+            )}
+            {medicines.length === 0 && (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center text-gray-400">
+                  <Pill size={48} className="mx-auto mb-4 opacity-50" />
+                  <p className="font-semibold">No medicines added yet</p>
+                </div>
+              </div>
+            )}
+          </div>
+      )}
+
       {/* CONTENT: SETTINGS VIEW */}
       {activeTab === 'settings' && (
           <div className="flex-1 p-6 overflow-y-auto">
@@ -647,7 +744,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                             : 'bg-gray-50 border border-gray-200 hover:bg-gray-100'
                         }`}
                       >
-                        <p className="font-semibold text-gray-900">{seniors[hId]?.name || 'Unknown Senior'}</p>
+                        <p className="font-semibold text-gray-900">{(seniors[hId] as HouseholdMember)?.name || 'Unknown Senior'}</p>
                         <p className="text-xs text-gray-500 font-mono mt-1">Code: {hId}</p>
                       </button>
                     ))}
@@ -697,7 +794,8 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
           customItems={[
             { id: 'home', icon: Home, label: 'Home' },
             { id: 'map', icon: MapIcon, label: 'Location' },
-            { id: 'schedule', icon: Pill, label: 'Schedule' },
+            { id: 'medicine', icon: Pill, label: 'Medicines' },
+            { id: 'compliance', icon: Activity, label: 'Compliance' },
             { id: 'settings', icon: Settings, label: 'Settings' }
           ]}
         />
