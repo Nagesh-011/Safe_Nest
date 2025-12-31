@@ -185,6 +185,7 @@ const App = () => {
   const [householdError, setHouseholdError] = useState('');
   const [isValidatingHousehold, setIsValidatingHousehold] = useState(false);
   const [isAppInForeground, setIsAppInForeground] = useState(true);
+  const [isJoiningAnother, setIsJoiningAnother] = useState(false); // Track if joining another household from caregiver dashboard
   const fallCountdownTimerRef = useRef<any>(null);
   const voiceDetectorRef = useRef<VoiceEmergencyDetector | null>(null);
   const [isVoiceEmergencyEnabled, setIsVoiceEmergencyEnabled] = useState(false);
@@ -242,6 +243,69 @@ const App = () => {
     }
     
     console.log('[LookupCodeByPhone] Returning null');
+    return null;
+  };
+
+  const handleSearchCaregiverByPhone = async (phone: string): Promise<{householdCode: string, profile: UserProfile} | null> => {
+    const normalized = normalizePhone(phone);
+    console.log('[SearchCaregiverByPhone] Starting search for phone:', normalized);
+    
+    if (normalized.length !== 10) {
+      console.log('[SearchCaregiverByPhone] Invalid phone length:', normalized.length);
+      return null;
+    }
+    
+    try {
+      await initializeAuth();
+      console.log('[SearchCaregiverByPhone] Auth initialized, fetching households...');
+      
+      // Search all households for a caregiver with this phone
+      const householdsSnap = await get(ref(db, 'households'));
+      if (householdsSnap.exists()) {
+        const households = householdsSnap.val();
+        const householdCodes = Object.keys(households);
+        console.log('[SearchCaregiverByPhone] Found', householdCodes.length, 'households to search');
+        
+        for (const householdCode of householdCodes) {
+          const household = households[householdCode];
+          
+          // Check members of this household
+          if (household.members) {
+            const members = Object.values(household.members) as HouseholdMember[];
+            console.log('[SearchCaregiverByPhone] Household', householdCode, 'has', members.length, 'members');
+            
+            const caregiver = members.find((m: HouseholdMember) => {
+              const memberPhone = normalizePhone(m.phone || '');
+              const isMatch = memberPhone === normalized && m.role === UserRole.CAREGIVER;
+              if (isMatch) {
+                console.log('[SearchCaregiverByPhone] MATCH FOUND! Member:', m.name, 'Phone:', memberPhone, 'Role:', m.role);
+              }
+              return isMatch;
+            });
+            
+            if (caregiver) {
+              console.log('[SearchCaregiverByPhone] ✓ Found caregiver in household', householdCode, '- Name:', caregiver.name);
+              return {
+                householdCode,
+                profile: {
+                  id: caregiver.id,
+                  name: caregiver.name,
+                  role: caregiver.role,
+                  avatar: caregiver.avatar,
+                  phone: caregiver.phone
+                }
+              };
+            }
+          }
+        }
+      } else {
+        console.log('[SearchCaregiverByPhone] No households found in database');
+      }
+      console.log('[SearchCaregiverByPhone] No caregiver found for phone:', normalized);
+    } catch (e) {
+      console.error('[SearchCaregiverByPhone Error]', e);
+    }
+    
     return null;
   };
 
@@ -586,7 +650,11 @@ const App = () => {
       try {
           // Vibration (works even when phone is silent)
           if (navigator.vibrate) {
-              navigator.vibrate([500, 200, 500, 200, 500, 200, 500, 200, 500, 200, 500]);
+              try {
+                  navigator.vibrate([500, 200, 500, 200, 500, 200, 500, 200, 500, 200, 500]);
+              } catch (e) {
+                  // Vibration API blocked or unavailable - ignored
+              }
           }
           
           // Try Web Audio API as fallback
@@ -628,7 +696,13 @@ const App = () => {
           clearInterval(sirenIntervalRef.current);
           sirenIntervalRef.current = null;
       }
-      if (navigator.vibrate) navigator.vibrate(0);
+      if (navigator.vibrate) {
+          try {
+              navigator.vibrate(0);
+          } catch (e) {
+              // Vibration API blocked or unavailable - ignored
+          }
+      }
   };
 
   useEffect(() => {
@@ -835,7 +909,7 @@ const App = () => {
 
   // Background fall detection via native foreground service
   useEffect(() => {
-    if (role === UserRole.SENIOR && householdId && seniorStatus.isFallDetectionEnabled) {
+    if (role === UserRole.SENIOR && currentUser.role === UserRole.SENIOR && householdId && seniorStatus.isFallDetectionEnabled) {
       startFallDetection();
       
       // Also start voice emergency monitoring
@@ -901,11 +975,11 @@ const App = () => {
       setIsVoiceEmergencyEnabled(false);
     }
     return undefined;
-  }, [role, householdId, seniorStatus.isFallDetectionEnabled, isAppInForeground]);
+  }, [role, currentUser.role, householdId, seniorStatus.isFallDetectionEnabled, isAppInForeground]);
 
   // --- Sensor Integration ---
   const { location, batteryLevel, requestMotionPermission } = useAppSensors({
-    isMonitoring: role === UserRole.SENIOR,
+    isMonitoring: role === UserRole.SENIOR && currentUser.role === UserRole.SENIOR,
     fallDetectionEnabled: seniorStatus.isFallDetectionEnabled,
     locationEnabled: seniorStatus.isLocationSharingEnabled,
     onFallDetected: () => {
@@ -1074,6 +1148,17 @@ const App = () => {
         }
         localStorage.setItem('safenest_active_household', cleanCode);
         setActiveHouseholdId(cleanCode);
+
+        // Persist caregiver -> households mapping in Firebase so it survives sign out
+        try {
+          const caregiverPhone = (profile.phone || '').replace(/\D/g, '');
+          if (caregiverPhone.length === 10) {
+            await set(ref(db, `caregiverIndex/${caregiverPhone}/${cleanCode}`), true);
+            console.log('[Rejoin] Caregiver index updated for phone', caregiverPhone, 'code', cleanCode);
+          }
+        } catch (e) {
+          console.warn('[Rejoin] Failed to update caregiver index', e);
+        }
       }
 
       // Save profile and household
@@ -1131,6 +1216,33 @@ const App = () => {
     };
     validate();
   }, [role, householdId]);
+
+  // Caregiver: Load all linked households from Firebase using caregiver phone (persists across sign out)
+  useEffect(() => {
+    const loadCaregiverHouseholds = async () => {
+      if (role !== UserRole.CAREGIVER) return;
+      const phoneDigits = (currentUser.phone || '').replace(/\D/g, '');
+      if (phoneDigits.length !== 10) return;
+      try {
+        await initializeAuth();
+        const snap = await get(ref(db, `caregiverIndex/${phoneDigits}`));
+        if (snap.exists()) {
+          const codesObj = snap.val() || {};
+          const codes = Object.keys(codesObj);
+          console.log('[Caregiver] Loaded linked households from Firebase:', codes);
+          setHouseholdIds(codes);
+          localStorage.setItem('safenest_household_ids', JSON.stringify(codes));
+          if (!activeHouseholdId && codes.length) {
+            setActiveHouseholdId(codes[0]);
+            localStorage.setItem('safenest_active_household', codes[0]);
+          }
+        }
+      } catch (e) {
+        console.warn('[Caregiver] Failed to load caregiver households', e);
+      }
+    };
+    loadCaregiverHouseholds();
+  }, [role, currentUser.phone]);
 
   // Senior: ensure household meta exists so caregivers can validate, and register phone index
   useEffect(() => {
@@ -1261,7 +1373,7 @@ const App = () => {
         });
       }
     );
-    return () => off(r, 'value');
+    return () => unsub();
   }, [role, householdId, seniorStatus.status]);
 
   // Register current user as household member when household is set
@@ -1294,9 +1406,17 @@ const App = () => {
       if (data) {
         const members = Object.values(data) as HouseholdMember[];
         setHouseholdMembers(members);
+        // Also populate seniors map for caregiver views
+        const seniorMember = members.find(m => m.role === UserRole.SENIOR);
+        if (seniorMember) {
+          setAllHouseholdSeniors(prev => ({
+            ...prev,
+            [householdId]: seniorMember
+          }));
+        }
       }
     });
-    return () => off(membersRef, 'value');
+    return () => unsub();
   }, [householdId]);
 
   // Subscribe to contacts (shared across household)
@@ -1310,7 +1430,7 @@ const App = () => {
         setContacts(contactsList);
       }
     });
-    return () => off(contactsRef, 'value');
+    return () => unsub();
   }, [householdId]);
 
   // Subscribe to reminders
@@ -1324,7 +1444,7 @@ const App = () => {
         setReminders(remindersList);
       }
     });
-    return () => off(remindersRef, 'value');
+    return () => unsub();
   }, [householdId]);
 
   // Multi-household support for caregivers - fetch senior info from all households
@@ -1357,7 +1477,7 @@ const App = () => {
           }
         }
       });
-      unsubscribers.push(() => off(membersRef, 'value'));
+      unsubscribers.push(() => memberUnsub());
       
       // Listen to status for alerts from all households
       const statusRef = ref(db, `households/${hId}/status`);
@@ -1387,7 +1507,7 @@ const App = () => {
           }
         }
       });
-      unsubscribers.push(() => off(statusRef, 'value'));
+      unsubscribers.push(() => statusUnsub());
     });
     
     return () => {
@@ -1469,6 +1589,10 @@ const App = () => {
     setContacts([]);
     setReminders([]);
     setSeniorStatus(INITIAL_SENIOR_STATUS);
+  };
+
+  const handleCancelJoinAnother = () => {
+    setIsJoiningAnother(false);
   };
 
   const handleSignOut = () => {
@@ -1588,13 +1712,39 @@ const App = () => {
 
   // Render ONLY the active view (Nav bar is handled separately)
   const renderCurrentView = () => {
-    // Show first-time setup if no profile exists
+    // Show first-time setup only on initial app load (new user)
+    if (isJoiningAnother && role === UserRole.CAREGIVER) {
+      return (
+        <FirstTimeSetup 
+          onComplete={(profile, selectedRole) => {
+            handleRejoinWithCode(householdId || '', profile, selectedRole);
+            setIsJoiningAnother(false);
+          }}
+          onRejoinWithCode={(code, profile, selectedRole) => {
+            handleRejoinWithCode(code, profile, selectedRole);
+            setIsJoiningAnother(false);
+          }}
+          onLookupCodeByPhone={handleLookupCodeByPhone}
+          onSearchCaregiverByPhone={handleSearchCaregiverByPhone}
+          onCheckExistingMember={handleCheckExistingMember}
+          onValidateHousehold={handleValidateHousehold}
+          onCheckPhoneUsed={handleCheckPhoneUsed}
+          rejoinError={householdError}
+          isValidatingRejoin={isValidatingHousehold}
+          existingProfile={currentUser}
+          existingRole={role}
+          onCancel={handleCancelJoinAnother}
+        />
+      );
+    }
+
     if (isFirstTime) {
       return (
         <FirstTimeSetup 
           onComplete={handleFirstTimeSetupComplete}
           onRejoinWithCode={handleRejoinWithCode}
           onLookupCodeByPhone={handleLookupCodeByPhone}
+          onSearchCaregiverByPhone={handleSearchCaregiverByPhone}
           onCheckExistingMember={handleCheckExistingMember}
           onValidateHousehold={handleValidateHousehold}
           onCheckPhoneUsed={handleCheckPhoneUsed}
@@ -1646,7 +1796,7 @@ const App = () => {
             stopAlert={stopCaregiverAlert}
             senior={senior}
             onSignOut={handleSignOut}
-            onJoinAnotherHousehold={() => setIsFirstTime(true)}
+            onJoinAnotherHousehold={() => setIsJoiningAnother(true)}
             householdId={householdId}
             householdIds={householdIds}
             onSwitchHousehold={handleSwitchHousehold}
@@ -1681,7 +1831,7 @@ const App = () => {
       case 'carers':
         return <ContactsView caregivers={householdMembers.filter(m => m.role === UserRole.CAREGIVER)} contacts={contacts} onAddContact={handleAddContact} />;
       case 'settings':
-         return <SettingsView onSignOut={handleSignOut} onJoinAnotherHousehold={() => setIsFirstTime(true)} userRole={role} />;
+         return <SettingsView onSignOut={handleSignOut} onJoinAnotherHousehold={() => setIsJoiningAnother(true)} userRole={role} />;
       case 'home':
       default:
         return (
@@ -1705,20 +1855,18 @@ const App = () => {
   return (
     <div className="min-h-screen w-full bg-white flex flex-col font-sans text-gray-900">
            {/* Scrollable Content Area */}
-           <div className="flex-1 overflow-y-auto no-scrollbar relative bg-white">
+           <div className="flex-1 flex flex-col overflow-y-auto no-scrollbar relative bg-white pb-24">
               {renderCurrentView()}
            </div>
 
-           {/* Fixed Bottom Navigation (Sibling to content, so it doesn't scroll away) */}
+           {/* Fixed Bottom Navigation */}
            {shouldShowNav && (
-               <div className="shrink-0 z-50 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)]">
-                   <BottomNav 
+               <BottomNav 
                         activeTab={activeTab} 
                         setActiveTab={setActiveTab}
                         isListening={isListening}
                         onVoiceClick={handleVoicePress}
                    />
-               </div>
            )}
     </div>
   );

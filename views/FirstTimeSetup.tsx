@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { UserRole, UserProfile } from '../types';
-import { User, Phone, Camera } from 'lucide-react';
+import { User, Phone, Camera, AlertCircle } from 'lucide-react';
 
 interface FirstTimeSetupProps {
   onComplete: (profile: UserProfile, role: UserRole) => void;
@@ -9,21 +9,24 @@ interface FirstTimeSetupProps {
   onCheckExistingMember?: (householdCode: string, phone: string) => Promise<UserProfile | null>;
   onValidateHousehold?: (householdCode: string) => Promise<boolean>;
   onCheckPhoneUsed?: (phone: string) => Promise<boolean>;
+  onSearchCaregiverByPhone?: (phone: string) => Promise<{householdCode: string, profile: UserProfile} | null>; // New callback for caregiver lookup
   rejoinError?: string;
   isValidatingRejoin?: boolean;
   existingProfile?: UserProfile; // User's existing profile when joining another household
   existingRole?: UserRole; // User's existing role
+  onCancel?: () => void; // Cancel joining another household
 }
 
-export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRejoinWithCode, onLookupCodeByPhone, onCheckExistingMember, onValidateHousehold, onCheckPhoneUsed, rejoinError, isValidatingRejoin, existingProfile, existingRole }) => {
+export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRejoinWithCode, onLookupCodeByPhone, onCheckExistingMember, onValidateHousehold, onCheckPhoneUsed, onSearchCaregiverByPhone, rejoinError, isValidatingRejoin, existingProfile, existingRole, onCancel }) => {
   // If existing user joining another household, skip to rejoin step with their profile
   const initialStep = (existingProfile && existingRole) ? 'rejoin' : 'role';
-  const [step, setStep] = useState<'role' | 'choice' | 'profile' | 'rejoin'>(initialStep);
+  const [step, setStep] = useState<'role' | 'choice' | 'profile' | 'rejoin' | 'lookup-caregiver' | 'caregiver-found'>(initialStep);
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(existingRole || null);
   const [householdCode, setHouseholdCode] = useState('');
   const [name, setName] = useState(existingProfile?.name || '');
   const [phone, setPhone] = useState(existingProfile?.phone || '');
   const [avatar, setAvatar] = useState(existingProfile?.avatar || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNFNUU3RUIiLz48Y2lyY2xlIGN4PSI1MCIgY3k9IjM1IiByPSIxNSIgZmlsbD0iIzlDQTNCNCIvPjxwYXRoIGQ9Ik0yMCA4NUMyMCA2NS4xMTggMzMuNDMxNSA1MCA1MCA1MEM2Ni41Njg1IDUwIDgwIDY1LjExOCA4MCA4NVYxMDBIMjBWODVaIiBmaWxsPSIjOUNBM0I0Ii8+PC9zdmc+');
+  const [existingProfileId, setExistingProfileId] = useState<string | null>(existingProfile?.id || null); // Track if loading existing caregiver
   const [isRejoinFlow, setIsRejoinFlow] = useState(false);
   const [lookupPhone, setLookupPhone] = useState('');
   const [lookupMessage, setLookupMessage] = useState('');
@@ -35,6 +38,7 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
   const [phoneError, setPhoneError] = useState('');
   const [isCheckingPhone, setIsCheckingPhone] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [foundCaregiver, setFoundCaregiver] = useState<UserProfile | null>(null);
 
   const normalizePhone = (value: string) => value.replace(/\D/g, '');
 
@@ -107,7 +111,7 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
 
     // Phone is validated or not provided, proceed
     const profile: UserProfile = {
-      id: `u${Date.now()}`,
+      id: existingProfileId || `u${Date.now()}`, // Use existing ID if loading existing caregiver
       name: name.trim(),
       role: selectedRole!,
       phone: phone.trim() || 'Not provided',
@@ -250,6 +254,46 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
     );
   }
 
+  // Handle caregiver phone lookup
+  const handleCaregiverPhoneLookup = async (phoneNum: string) => {
+    const digits = normalizePhone(phoneNum);
+    if (digits.length !== 10) {
+      setLocalError('Enter a valid 10-digit phone number.');
+      return;
+    }
+
+    setLocalValidating(true);
+    setLocalError('');
+
+    try {
+      if (onSearchCaregiverByPhone) {
+        const result = await onSearchCaregiverByPhone(digits);
+        if (result) {
+          console.log('[CaregiverLookup] Found:', result.profile.name, 'in household:', result.householdCode);
+          const cgProfile: UserProfile = {
+            id: result.profile.id,
+            name: result.profile.name,
+            role: UserRole.CAREGIVER,
+            avatar: result.profile.avatar,
+            phone: result.profile.phone
+          };
+          setFoundCaregiver(cgProfile);
+          setHouseholdCode(result.householdCode);
+          setIsRejoinFlow(true);
+          setLocalValidating(false);
+          setStep('caregiver-found');
+          return;
+        }
+      }
+      setLocalError('No caregiver profile found with this phone number. Please create a new profile.');
+      setLocalValidating(false);
+    } catch (e) {
+      console.error('[Caregiver Lookup Error]', e);
+      setLocalError('Could not look up profile. Please try again or create a new profile.');
+      setLocalValidating(false);
+    }
+  };
+
   // Choice step: Create new profile or rejoin with household code
   if (step === 'choice') {
     return (
@@ -257,7 +301,7 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
         <div className="max-w-md w-full">
           <div className="text-center mb-12">
             <h1 className="text-3xl font-bold text-gray-900 mb-2">How would you like to continue?</h1>
-            <p className="text-gray-600">Create a new profile or rejoin an existing household</p>
+            <p className="text-gray-600">{selectedRole === UserRole.CAREGIVER ? 'Are you already a caregiver or creating a new profile?' : 'Create a new profile or rejoin an existing household'}</p>
           </div>
 
           <div className="space-y-4">
@@ -266,6 +310,8 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
                 onClick={() => {
                   setIsRejoinFlow(false);
                   setHouseholdCode('');
+                  setName('');
+                  setPhone('');
                   setStep('profile');
                 }}
                 className="w-full p-6 bg-white border-2 border-gray-200 rounded-2xl hover:border-blue-500 hover:shadow-lg transition-all text-left group"
@@ -275,8 +321,30 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
                     <User className="w-8 h-8 text-blue-600 group-hover:text-white" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-900">Create New Senior Profile</h3>
-                    <p className="text-sm text-gray-500">Start fresh with a new household</p>
+                    <h3 className="text-lg font-semibold text-gray-900">Create New Profile</h3>
+                    <p className="text-sm text-gray-500">Set up as a new senior</p>
+                  </div>
+                </div>
+              </button>
+            )}
+
+            {selectedRole === UserRole.CAREGIVER && (
+              <button
+                onClick={() => {
+                  setLocalError('');
+                  setLocalValidating(false);
+                  setPhone('');
+                  setStep('lookup-caregiver');
+                }}
+                className="w-full p-6 bg-white border-2 border-gray-200 rounded-2xl hover:border-green-500 hover:shadow-lg transition-all text-left group"
+              >
+                <div className="flex items-center space-x-4">
+                  <div className="p-3 bg-green-100 rounded-xl group-hover:bg-green-500 transition-colors">
+                    <User className="w-8 h-8 text-green-600 group-hover:text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">I'm Already a Caregiver</h3>
+                    <p className="text-sm text-gray-500">Look up your profile by phone number</p>
                   </div>
                 </div>
               </button>
@@ -287,6 +355,8 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
                 onClick={() => {
                   setIsRejoinFlow(false);
                   setHouseholdCode('');
+                  setName('');
+                  setPhone('');
                   setStep('profile');
                 }}
                 className="w-full p-6 bg-white border-2 border-gray-200 rounded-2xl hover:border-blue-500 hover:shadow-lg transition-all text-left group"
@@ -296,8 +366,35 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
                     <User className="w-8 h-8 text-blue-600 group-hover:text-white" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-900">Create New Caregiver Profile</h3>
-                    <p className="text-sm text-gray-500"> a new Caregiver to monitor in a new household</p>
+                    <h3 className="text-lg font-semibold text-gray-900">Create New Profile</h3>
+                    <p className="text-sm text-gray-500">Set up as a new caregiver</p>
+                  </div>
+                </div>
+              </button>
+            )}
+
+            {selectedRole === UserRole.SENIOR && (
+              <button
+                onClick={() => {
+                  setIsRejoinFlow(true);
+                  setHouseholdCode('');
+                  setLookupPhone('');
+                  setLookupMessage('');
+                  setLookupError('');
+                  setName('');
+                  setPhone('');
+                  setRejoinPhone('');
+                  setStep('rejoin');
+                }}
+                className="w-full p-6 bg-white border-2 border-gray-200 rounded-2xl hover:border-green-500 hover:shadow-lg transition-all text-left group"
+              >
+                <div className="flex items-center space-x-4">
+                  <div className="p-3 bg-green-100 rounded-xl group-hover:bg-green-500 transition-colors">
+                    <User className="w-8 h-8 text-green-600 group-hover:text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">Already Have Code?</h3>
+                    <p className="text-sm text-gray-500">Rejoin your existing household</p>
                   </div>
                 </div>
               </button>
@@ -305,34 +402,172 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
 
             <button
               onClick={() => {
-                setIsRejoinFlow(true);
-                setHouseholdCode('');
-                setLookupPhone('');
-                setLookupMessage('');
-                setLookupError('');
-                setName('');
-                setPhone('');
-                setRejoinPhone('');
-                setStep('rejoin');
+                if (onCancel) {
+                  onCancel();
+                } else {
+                  setIsRejoinFlow(false);
+                  setHouseholdCode('');
+                  setStep('role');
+                }
               }}
-              className="w-full p-6 bg-white border-2 border-gray-200 rounded-2xl hover:border-green-500 hover:shadow-lg transition-all text-left group"
+              className="w-full py-3 border-2 border-gray-300 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-colors"
             >
-              <div className="flex items-center space-x-4">
-                <div className="p-3 bg-green-100 rounded-xl group-hover:bg-green-500 transition-colors">
-                  <User className="w-8 h-8 text-green-600 group-hover:text-white" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">{selectedRole === UserRole.CAREGIVER ? 'Join Household' : 'Already Have Code?'}</h3>
-                  <p className="text-sm text-gray-500">{selectedRole === UserRole.CAREGIVER ? 'Enter the code to join' : 'Rejoin your existing household'}</p>
-                </div>
+              Back
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Lookup existing caregiver by phone
+  if (step === 'lookup-caregiver') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-8">
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Find Your Profile</h2>
+            <p className="text-gray-600">Enter the phone number associated with your caregiver account</p>
+          </div>
+
+          <div className="space-y-6">
+            {/* Phone Input */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Phone Number *
+              </label>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => {
+                    const digits = normalizePhone(e.target.value);
+                    if (digits.length <= 10) setPhone(digits);
+                  }}
+                  placeholder="10-digit mobile number"
+                  maxLength={10}
+                  className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+                />
               </div>
+              {phone && phone.length !== 10 && (
+                <p className="text-xs text-red-500 mt-1">Phone number must be exactly 10 digits</p>
+              )}
+            </div>
+
+            {/* Error Message */}
+            {localError && (
+              <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 text-sm text-red-800 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <p><span className="font-semibold">Not Found:</span> {localError}</p>
+              </div>
+            )}
+
+            {/* Buttons */}
+            <div className="flex space-x-3 pt-4">
+              <button
+                onClick={() => {
+                  if (onCancel) {
+                    onCancel();
+                  } else {
+                    setStep('choice');
+                    setPhone('');
+                    setLocalError('');
+                  }
+                }}
+                disabled={localValidating}
+                className="flex-1 py-3 border-2 border-gray-300 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Back
+              </button>
+              <button
+                onClick={() => {
+                  if (phone.length === 10) {
+                    handleCaregiverPhoneLookup(phone);
+                  }
+                }}
+                disabled={phone.length !== 10 || localValidating}
+                className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {localValidating ? 'Searching...' : 'Search'}
+              </button>
+            </div>
+
+            {/* Fallback option */}
+            <button
+              onClick={() => {
+                setStep('choice');
+                setPhone('');
+                setLocalError('');
+              }}
+              className="w-full py-2 text-sm text-blue-600 hover:text-blue-700 font-semibold"
+            >
+              Create a new profile instead
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Caregiver found: allow proceed to dashboard or add another senior
+  if (step === 'caregiver-found' && foundCaregiver) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-8">
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Caregiver Verified</h2>
+            <p className="text-gray-600">Phone matched an existing caregiver</p>
+          </div>
+
+          <div className="bg-gray-50 rounded-2xl p-4 mb-6 flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+              <User className="w-6 h-6 text-blue-600" />
+            </div>
+            <div>
+              <p className="font-semibold text-gray-900">{foundCaregiver.name}</p>
+              <p className="text-xs text-gray-500">{foundCaregiver.phone}</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <button
+              onClick={() => {
+                // If we already know the household code, join immediately; otherwise just complete profile
+                if (householdCode && onRejoinWithCode) {
+                  onRejoinWithCode(householdCode, foundCaregiver, UserRole.CAREGIVER);
+                } else {
+                  onComplete(foundCaregiver, UserRole.CAREGIVER);
+                }
+              }}
+              className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors"
+            >
+              Proceed to Dashboard
             </button>
 
             <button
               onClick={() => {
-                setIsRejoinFlow(false);
-                setHouseholdCode('');
-                setStep('role');
+                setIsRejoinFlow(true);
+                // keep the found household code so caregiver can quickly link another senior
+                setLookupPhone('');
+                setLookupMessage('');
+                setLookupError('');
+                setName(foundCaregiver.name);
+                setPhone(foundCaregiver.phone.replace(/\D/g, ''));
+                setStep('rejoin');
+              }}
+              className="w-full py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 transition-colors"
+            >
+              Add Another Senior
+            </button>
+
+            <button
+              onClick={() => {
+                if (onCancel) {
+                  onCancel();
+                } else {
+                  setStep('choice');
+                }
               }}
               className="w-full py-3 border-2 border-gray-300 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-colors"
             >
@@ -413,7 +648,13 @@ export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRe
             {/* Buttons */}
             <div className="flex space-x-3 pt-4">
               <button
-                onClick={() => setStep('choice')}
+                onClick={() => {
+                  if (onCancel) {
+                    onCancel();
+                  } else {
+                    setStep('choice');
+                  }
+                }}
                 disabled={isValidatingRejoin || localValidating}
                 className="flex-1 py-3 border-2 border-gray-300 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
               >

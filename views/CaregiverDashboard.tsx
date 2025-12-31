@@ -41,6 +41,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<'home' | 'map' | 'schedule' | 'settings'>('home');
   const [showAddModal, setShowAddModal] = useState(false);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
+  const [selectedSeniorId, setSelectedSeniorId] = useState<string | null>(null);
   
   // New Reminder Form State
   const [newTitle, setNewTitle] = useState('');
@@ -81,62 +82,184 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
 
   // --- MAP INIT LOGIC (Existing) ---
   useEffect(() => {
-    if (activeTab === 'map' && mapContainerRef.current && typeof L !== 'undefined') {
-        if (!mapInstanceRef.current) {
-            const map = L.map(mapContainerRef.current, { zoomControl: false, attributionControl: false })
-                .setView([seniorStatus.location.lat, seniorStatus.location.lng], 16);
+    if (activeTab !== 'map') return;
+    if (!mapContainerRef.current || typeof L === 'undefined') return;
+    
+    // Clear existing map instance and its DOM
+    if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+        markerRef.current = null;
+    }
+    
+    // Clear the container
+    if (mapContainerRef.current) {
+        mapContainerRef.current.innerHTML = '';
+    }
+    
+    // Initialize map with delay to ensure proper rendering
+    const timer = setTimeout(() => {
+        if (!mapContainerRef.current) return;
+        
+        try {
+            console.log('[MAP] Initializing map...', {
+                lat: seniorStatus.location.lat,
+                lng: seniorStatus.location.lng,
+                containerSize: mapContainerRef.current.getBoundingClientRect()
+            });
             
-            // Add both tile layers
-            const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
-            const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
+            const map = L.map(mapContainerRef.current, { 
+                zoomControl: false, 
+                attributionControl: false 
+            }).setView([seniorStatus.location.lat, seniorStatus.location.lng], 16);
             
-            // Store layers on map object for switching
+            // Add street layer by default
+            const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+                maxZoom: 19,
+                attribution: ''
+            }).addTo(map);
+            
+            // Create satellite layer (don't add yet)
+            const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { 
+                maxZoom: 19,
+                attribution: ''
+            });
+            
+            // Store layers
             (map as any).layers = { street: streetLayer, satellite: satelliteLayer };
-            streetLayer.addTo(map);
+            
+            // Add marker
+            const marker = L.marker([seniorStatus.location.lat, seniorStatus.location.lng]).addTo(map);
             
             mapInstanceRef.current = map;
-            markerRef.current = L.marker([seniorStatus.location.lat, seniorStatus.location.lng]).addTo(map);
+            markerRef.current = marker;
+            
+            // Trigger resize
+            setTimeout(() => {
+                map.invalidateSize();
+            }, 100);
+            
+            console.log('[MAP] Map initialized successfully');
+        } catch (error) {
+            console.error('[MAP] Error initializing map:', error);
         }
-        
-        // Force resize recalculation to ensure full fill
-        setTimeout(() => {
-            mapInstanceRef.current?.invalidateSize();
-        }, 100);
-    }
-  }, [activeTab]);
+    }, 100);
+    
+    // Cleanup
+    return () => {
+        clearTimeout(timer);
+        if (mapInstanceRef.current) {
+            mapInstanceRef.current.remove();
+            mapInstanceRef.current = null;
+            markerRef.current = null;
+        }
+    };
+  }, [activeTab, seniorStatus.location.lat, seniorStatus.location.lng]);
 
   // Handle map type switching
   useEffect(() => {
     if (mapInstanceRef.current && (mapInstanceRef.current as any).layers) {
       const { street, satellite } = (mapInstanceRef.current as any).layers;
       if (mapType === 'street') {
-        mapInstanceRef.current.removeLayer(satellite);
-        mapInstanceRef.current.addLayer(street);
+        if (mapInstanceRef.current.hasLayer(satellite)) {
+          mapInstanceRef.current.removeLayer(satellite);
+        }
+        if (!mapInstanceRef.current.hasLayer(street)) {
+          mapInstanceRef.current.addLayer(street);
+        }
       } else {
-        mapInstanceRef.current.removeLayer(street);
-        mapInstanceRef.current.addLayer(satellite);
+        if (mapInstanceRef.current.hasLayer(street)) {
+          mapInstanceRef.current.removeLayer(street);
+        }
+        if (!mapInstanceRef.current.hasLayer(satellite)) {
+          mapInstanceRef.current.addLayer(satellite);
+        }
       }
     }
   }, [mapType]);
 
-  // Update map when senior location changes
-  useEffect(() => {
-    if (mapInstanceRef.current && markerRef.current && seniorStatus.location) {
-      const newLatLng = [seniorStatus.location.lat, seniorStatus.location.lng];
-      mapInstanceRef.current.panTo(newLatLng);
-      markerRef.current.setLatLng(newLatLng);
-    }
-  }, [seniorStatus.location]);
+  const displayHouseholdIds = (householdIds && householdIds.length > 0)
+    ? householdIds
+    : (householdId ? [householdId] : []);
+
+  // Get all available seniors
+  const allSeniors = Object.values(seniors || {});
+  
+  // Show senior selection screen if multiple seniors and none selected
+  if (allSeniors.length > 1 && !selectedSeniorId) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-6">
+        <div className="max-w-2xl w-full">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl font-bold text-gray-900 mb-2">Select Senior</h2>
+            <p className="text-gray-600">Choose which senior you want to monitor</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {allSeniors.map((sen) => (
+              <button
+                key={sen.id}
+                onClick={() => {
+                  setSelectedSeniorId(sen.id);
+                  if (onSwitchHousehold) {
+                    // Find the household ID for this senior
+                    const householdIdForSenior = Object.entries(seniors || {}).find(([_, s]) => s.id === sen.id)?.[0];
+                    if (householdIdForSenior) {
+                      onSwitchHousehold(householdIdForSenior);
+                    }
+                  }
+                }}
+                className="p-6 bg-white rounded-2xl shadow-md hover:shadow-lg transition-all hover:scale-105 text-left border-2 border-transparent hover:border-blue-500"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                    {sen.avatar ? (
+                      <img src={sen.avatar} alt={sen.name} className="w-full h-full rounded-full object-cover" />
+                    ) : (
+                      <span className="text-2xl font-bold text-blue-600">{sen.name?.[0]?.toUpperCase()}</span>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-lg font-bold text-gray-900">{sen.name}</p>
+                    <p className="text-sm text-gray-500">{sen.phone}</p>
+                  </div>
+                  <div className="text-2xl">→</div>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => onJoinAnotherHousehold?.()}
+            className="w-full mt-6 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 transition-colors"
+          >
+            + Add Another Senior
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 relative">
+    <div className="flex flex-col h-full bg-gray-50 relative pb-24">
       
       {/* Header */}
             <div className={`shadow-sm px-4 py-4 flex items-center justify-between z-[50] bg-white flex-shrink-0`}>
-            {/* Senior Name */}
-            <div className="flex-1">
-              <p className="text-sm font-bold text-gray-500 uppercase">Monitoring</p>
-              <p className="text-lg font-bold text-gray-900">{senior?.name || 'Senior'}</p>
+            {/* Back Button / Senior Name */}
+            <div className="flex-1 flex items-center gap-3">
+              {allSeniors.length > 1 && (
+                <button
+                  onClick={() => setSelectedSeniorId(null)}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Select different senior"
+                >
+                  <ArrowLeft size={20} className="text-gray-600" />
+                </button>
+              )}
+              <div>
+                <p className="text-sm font-bold text-gray-500 uppercase">Monitoring</p>
+                <p className="text-lg font-bold text-gray-900">{senior?.name || 'Senior'}</p>
+              </div>
             </div>
                 <div className="flex items-center gap-2">
                         {onSignOut && (
@@ -153,70 +276,216 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
 
       {/* CONTENT: HOME VIEW */}
       {activeTab === 'home' && (
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back</h1>
-              <p className="text-gray-600">Monitoring {householdIds.length} senior{householdIds.length !== 1 ? 's' : ''}</p>
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gradient-to-br from-blue-50/30 via-white to-purple-50/30">
+            {/* Welcome Header */}
+            <div className="mb-2">
+              <h1 className="text-3xl font-bold text-gray-900 mb-1">Dashboard</h1>
+              <p className="text-gray-600">Monitoring {senior?.name || 'Senior'}</p>
             </div>
 
-            {/* All Seniors Status Cards */}
-            <div className="space-y-4">
-              {householdIds.map(hId => {
-                const seniorData = seniors[hId];
-                if (!seniorData) return null;
-                
-                return (
-                  <div key={hId} className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                    <div className="mb-4">
-                      <h2 className="text-lg font-bold text-gray-900">{seniorData.name}</h2>
-                      <p className="text-xs text-gray-500 font-mono mt-1">Code: {hId}</p>
-                    </div>
-                    
-                    <div className="grid grid-cols-3 gap-4 mb-4">
-                      <div className="text-center">
-                        <p className="text-sm text-gray-600 mb-1">Heart Rate</p>
-                        <p className="text-2xl font-bold text-red-600">{seniorStatus?.heartRate || '--'}</p>
-                        <p className="text-xs text-gray-500">bpm</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-sm text-gray-600 mb-1">O₂ Level</p>
-                        <p className="text-2xl font-bold text-blue-600">{seniorStatus?.spo2 || '--'}%</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-sm text-gray-600 mb-1">Status</p>
-                        <p className={`text-lg font-bold ${seniorStatus?.status === 'Normal' ? 'text-green-600' : 'text-red-600'}`}>
-                          {seniorStatus?.status || 'Unknown'}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Location Place */}
-                    <div className="bg-gray-50 rounded-lg p-4 flex items-start gap-3">
-                      <MapPin size={24} className="text-blue-600 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-xs text-gray-600 font-semibold">Location</p>
-                        <p className="text-gray-900 font-semibold">{seniorStatus?.location?.address || 'Updating location...'}</p>
-                      </div>
-                    </div>
+            {/* Emergency Status Banner */}
+            {isEmergency && (
+              <div className="bg-gradient-to-r from-red-500 to-red-600 rounded-2xl p-6 shadow-lg animate-pulse">
+                <div className="flex items-center justify-between text-white">
+                  <div>
+                    <p className="text-sm font-semibold uppercase tracking-wide opacity-90">Emergency Alert</p>
+                    <p className="text-2xl font-bold mt-1">{seniorStatus.status}</p>
+                    <p className="text-sm opacity-90 mt-2">{seniorStatus.location?.address || 'Location tracking...'}</p>
                   </div>
-                );
-              })}
+                  <Phone size={48} className="opacity-80" />
+                </div>
+                {senior && (
+                  <button 
+                    onClick={handleCallSenior}
+                    className="w-full bg-white text-red-600 font-bold py-3 px-4 rounded-xl mt-4 hover:bg-gray-100 transition-colors shadow-md"
+                  >
+                    Call {senior.name.split(' ')[0]} Now
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Quick Stats Grid */}
+            {senior && householdId && (
+              <div className="grid grid-cols-2 gap-4">
+                {/* Heart Rate Card */}
+                <div className="bg-gradient-to-br from-red-50 to-white rounded-2xl p-5 shadow-sm border border-red-100">
+                  <div className="flex items-center justify-between mb-3">
+                    <Heart size={24} className="text-red-500" />
+                    <span className={`w-2 h-2 rounded-full ${seniorStatus?.heartRate > 100 ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}></span>
+                  </div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Heart Rate</p>
+                  <p className="text-3xl font-bold text-gray-900">{seniorStatus?.heartRate || '--'}</p>
+                  <p className="text-xs text-gray-500 mt-1">bpm</p>
+                </div>
+
+                {/* Oxygen Level Card */}
+                <div className="bg-gradient-to-br from-blue-50 to-white rounded-2xl p-5 shadow-sm border border-blue-100">
+                  <div className="flex items-center justify-between mb-3">
+                    <Activity size={24} className="text-blue-500" />
+                    <span className={`w-2 h-2 rounded-full ${seniorStatus?.spo2 < 95 ? 'bg-orange-500 animate-pulse' : 'bg-green-500'}`}></span>
+                  </div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Oxygen</p>
+                  <p className="text-3xl font-bold text-gray-900">{seniorStatus?.spo2 || '--'}</p>
+                  <p className="text-xs text-gray-500 mt-1">SpO₂ %</p>
+                </div>
+
+                {/* Battery Card */}
+                <div className="bg-gradient-to-br from-green-50 to-white rounded-2xl p-5 shadow-sm border border-green-100">
+                  <div className="flex items-center justify-between mb-3">
+                    <Battery size={24} className="text-green-500" />
+                    <span className={`w-2 h-2 rounded-full ${seniorStatus?.batteryLevel < 20 ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}></span>
+                  </div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Battery</p>
+                  <p className="text-3xl font-bold text-gray-900">{seniorStatus?.batteryLevel || '--'}</p>
+                  <p className="text-xs text-gray-500 mt-1">percent</p>
+                </div>
+
+                {/* Status Card */}
+                <div className={`bg-gradient-to-br ${isEmergency ? 'from-red-50 to-white border-red-100' : 'from-emerald-50 to-white border-emerald-100'} rounded-2xl p-5 shadow-sm border`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <CheckCircle size={24} className={isEmergency ? 'text-red-500' : 'text-emerald-500'} />
+                    <span className={`w-2 h-2 rounded-full ${isEmergency ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`}></span>
+                  </div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Status</p>
+                  <p className={`text-xl font-bold ${isEmergency ? 'text-red-600' : 'text-emerald-600'}`}>
+                    {seniorStatus?.status || 'Unknown'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Location Card */}
+            {senior && (
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <div className="flex items-start gap-4">
+                  <div className="p-3 bg-blue-50 rounded-xl">
+                    <MapPin size={28} className="text-blue-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-gray-600 mb-1">Current Location</p>
+                    <p className="text-lg font-bold text-gray-900 mb-2">{seniorStatus?.location?.address || 'Updating location...'}</p>
+                    <p className="text-xs text-gray-500">Last updated: {seniorStatus?.lastUpdate ? new Date(seniorStatus.lastUpdate).toLocaleTimeString() : 'N/A'}</p>
+                  </div>
+                  <button 
+                    onClick={() => setActiveTab('map')}
+                    className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    View Map
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Quick Actions */}
+            <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+              <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <Home size={20} />
+                Quick Actions
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                {senior && (
+                  <button 
+                    onClick={handleCallSenior}
+                    className="p-4 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl font-semibold hover:from-blue-600 hover:to-blue-700 transition-all flex items-center justify-center gap-2 shadow-md"
+                  >
+                    <Phone size={20} />
+                    Call
+                  </button>
+                )}
+                <button 
+                  onClick={() => setActiveTab('schedule')}
+                  className="p-4 bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-xl font-semibold hover:from-purple-600 hover:to-purple-700 transition-all flex items-center justify-center gap-2 shadow-md"
+                >
+                  <Calendar size={20} />
+                  Schedule
+                </button>
+                <button 
+                  onClick={() => setActiveTab('map')}
+                  className="p-4 bg-gradient-to-br from-green-500 to-green-600 text-white rounded-xl font-semibold hover:from-green-600 hover:to-green-700 transition-all flex items-center justify-center gap-2 shadow-md"
+                >
+                  <MapIcon size={20} />
+                  Track
+                </button>
+                <button 
+                  onClick={() => setActiveTab('settings')}
+                  className="p-4 bg-gradient-to-br from-gray-500 to-gray-600 text-white rounded-xl font-semibold hover:from-gray-600 hover:to-gray-700 transition-all flex items-center justify-center gap-2 shadow-md"
+                >
+                  <Settings size={20} />
+                  Settings
+                </button>
+              </div>
             </div>
 
             {/* Upcoming Medications */}
             {reminders.length > 0 && (
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                <h3 className="font-bold text-gray-900 mb-3">Next Medications</h3>
-                <div className="space-y-2">
-                  {reminders.slice(0, 3).map((reminder) => (
-                    <div key={reminder.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <div>
-                        <p className="font-semibold text-gray-900">{reminder.title}</p>
-                        <p className="text-xs text-gray-500">{reminder.time}</p>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                    <Pill size={20} className="text-purple-600" />
+                    Today's Medications
+                  </h3>
+                  <button 
+                    onClick={() => setActiveTab('schedule')}
+                    className="text-sm text-blue-600 font-semibold hover:text-blue-700"
+                  >
+                    View All
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {reminders.slice(0, 4).map((reminder) => (
+                    <div key={reminder.id} className="flex items-center gap-4 p-4 bg-gradient-to-r from-purple-50 to-transparent rounded-xl border border-purple-100">
+                      <div className="flex-shrink-0 w-16 h-16 bg-purple-100 rounded-xl flex flex-col items-center justify-center">
+                        <p className="text-lg font-bold text-purple-600">{reminder.time.split(':')[0]}</p>
+                        <p className="text-xs text-purple-600">{reminder.time.split(':')[1]}</p>
                       </div>
-                      <Pill size={20} className="text-blue-600" />
+                      <div className="flex-1">
+                        <p className="font-bold text-gray-900">{reminder.title}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{reminder.instructions}</p>
+                      </div>
+                      <div>
+                        {reminder.status === 'COMPLETED' && (
+                          <div className="flex flex-col items-center gap-1">
+                            <CheckCircle size={24} className="text-green-500" />
+                            <span className="text-[10px] font-bold text-green-600">Taken</span>
+                          </div>
+                        )}
+                        {reminder.status === 'PENDING' && (
+                          <div className="flex flex-col items-center gap-1">
+                            <Clock size={24} className="text-gray-400" />
+                            <span className="text-[10px] font-bold text-gray-500">Pending</span>
+                          </div>
+                        )}
+                        {reminder.status === 'SNOOZED' && (
+                          <div className="flex flex-col items-center gap-1">
+                            <Bell size={24} className="text-orange-500" />
+                            <span className="text-[10px] font-bold text-orange-600">Snoozed</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Senior Info Card */}
+            {senior && householdId && (
+              <div className="bg-gradient-to-br from-gray-50 to-white rounded-2xl p-6 shadow-sm border border-gray-200">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                    {senior.avatar ? (
+                      <img src={senior.avatar} alt={senior.name} className="w-full h-full rounded-full object-cover" />
+                    ) : (
+                      <span className="text-2xl font-bold text-blue-600">{senior.name?.[0]?.toUpperCase()}</span>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-gray-600 mb-1">Monitoring</p>
+                    <p className="text-xl font-bold text-gray-900">{senior.name}</p>
+                    <p className="text-sm text-gray-500 mt-1">{senior.phone}</p>
+                    <p className="text-xs text-gray-400 font-mono mt-1">Code: {householdId}</p>
+                  </div>
                 </div>
               </div>
             )}
@@ -225,8 +494,8 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
 
       {/* CONTENT: MAP VIEW */}
       {activeTab === 'map' && (
-          <div className="flex-1 relative overflow-hidden">
-            <div ref={mapContainerRef} className="w-full h-full outline-none z-0" />
+          <div className="flex-1 relative overflow-hidden bg-gray-200">
+            <div ref={mapContainerRef} className="absolute inset-0 w-full h-full outline-none z-0" />
             
             {/* Map Type Toggle Buttons */}
             <div className="absolute top-4 right-4 z-20 flex gap-2">
@@ -247,24 +516,19 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
               </button>
             </div>
             <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.1)] p-6 z-10">
-                <div className="flex justify-between items-start mb-6">
-                    <div>
-                        <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mb-2 ${isEmergency ? 'bg-red-100 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                <div className="flex justify-between items-center gap-6">
+                    <div className="flex-1 min-w-0 flex flex-col justify-center">
+                        <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mb-2 ${isEmergency ? 'bg-red-100 text-red-700' : 'bg-green-50 text-green-700'} w-fit`}>
                             <div className={`w-2 h-2 rounded-full ${isEmergency ? 'bg-red-600 animate-pulse' : 'bg-green-500'}`}></div>
                             {isEmergency ? seniorStatus.status : 'Safe at Home'}
                         </div>
-                        <h2 className="text-xl font-bold text-gray-900">{seniorStatus.location.address}</h2>
+                        <h2 className="text-lg font-bold text-gray-900 line-clamp-2 break-words">{seniorStatus.location.address}</h2>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                        <div className="flex items-center gap-1 text-gray-500 text-xs font-bold"><Battery size={14} /> {seniorStatus.batteryLevel}%</div>
-                        <div className="flex items-center gap-1 text-gray-500 text-xs font-bold"><Heart size={14} /> {seniorStatus.heartRate} bpm</div>
+                    <div className="flex flex-col items-end justify-center gap-2 flex-shrink-0">
+                        <div className="flex items-center gap-1.5 text-gray-600 text-sm font-medium whitespace-nowrap"><Battery size={16} /> {seniorStatus.batteryLevel}%</div>
+                        <div className="flex items-center gap-1.5 text-gray-600 text-sm font-medium whitespace-nowrap"><Heart size={16} /> {seniorStatus.heartRate} bpm</div>
                     </div>
                 </div>
-                {senior && (
-                  <button onClick={handleCallSenior} className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
-                      <Phone size={20} /> Call {senior.name.split(' ')[0]}
-                  </button>
-                )}
             </div>
           </div>
       )}
@@ -427,8 +691,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
       )}
 
       {/* Bottom Navigation */}
-      <div className="shrink-0 z-50 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)]">
-        <BottomNav
+      <BottomNav
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           customItems={[
@@ -438,7 +701,6 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
             { id: 'settings', icon: Settings, label: 'Settings' }
           ]}
         />
-      </div>
 
     </div>
   );

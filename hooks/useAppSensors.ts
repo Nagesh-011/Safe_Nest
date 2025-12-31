@@ -77,11 +77,11 @@ export const useAppSensors = ({
       
       lastAddressFetchTime.current = now;
 
+      // Use dev proxy to avoid CORS in local environment
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+        `/geocode/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
         {
           headers: {
-            'User-Agent': 'SafeNest-App/1.0',
             'Accept-Language': 'en'
           }
         }
@@ -282,12 +282,16 @@ export const useAppSensors = ({
     if (!isMonitoring) return;
 
     // --- 2. Fall Detection (Accelerometer) ---
-    // Threshold set to ~4G (Gravity is ~9.8). 
-    // Jumping/Falling typically creates spikes > 40 m/s^2 upon impact.
-    const IMPACT_THRESHOLD = 40; 
-    const COOLDOWN_MS = 5000;
+    // Slightly higher threshold and require two fast spikes to reduce false positives.
+    const IMPACT_THRESHOLD = 55; // ~5.5G spike
+    const JERK_THRESHOLD = 18;   // change in acceleration between samples
+    const IMPACT_WINDOW_MS = 450; // window to accumulate 2 spikes
+    const COOLDOWN_MS = 6000;
     let lastTime = 0;
     let lastAlertTime = 0;
+    let lastAccel = 0;
+    let impactCount = 0;
+    let windowStart = 0;
 
     const handleMotion = (event: DeviceMotionEvent) => {
       if (!fallDetectionEnabled) return;
@@ -300,14 +304,26 @@ export const useAppSensors = ({
       lastTime = currentTime;
 
       const totalAcceleration = Math.sqrt(x * x + y * y + z * z);
+      const jerk = Math.abs(totalAcceleration - lastAccel);
+      lastAccel = totalAcceleration;
 
-      if (totalAcceleration > IMPACT_THRESHOLD) {
-        // Enforce cooldown to prevent repeated alerts
-        if (currentTime - lastAlertTime < COOLDOWN_MS) {
-          return;
-        }
+      const inCooldown = currentTime - lastAlertTime < COOLDOWN_MS;
+      if (inCooldown) return;
+
+      const isStrongImpact = totalAcceleration > IMPACT_THRESHOLD && jerk > JERK_THRESHOLD;
+      if (!isStrongImpact) return;
+
+      // Accumulate two strong spikes within a short window to confirm a fall
+      if (currentTime - windowStart > IMPACT_WINDOW_MS) {
+        impactCount = 0;
+        windowStart = currentTime;
+      }
+
+      impactCount += 1;
+      if (impactCount >= 2) {
         lastAlertTime = currentTime;
-        console.log("Fall Impact Detected:", totalAcceleration);
+        impactCount = 0;
+        console.log("Fall Impact Detected:", totalAcceleration, "jerk:", jerk);
         if (typeof navigator.vibrate === 'function') {
             navigator.vibrate([500, 200, 500, 200, 500]); 
         }

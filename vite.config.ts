@@ -20,6 +20,12 @@ export default defineConfig(({ mode }) => {
             target: 'http://localhost:3001',
             changeOrigin: true,
           },
+          // Dev proxy for OpenStreetMap Nominatim reverse geocoding
+          '/geocode': {
+            target: 'https://nominatim.openstreetmap.org',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/geocode/, ''),
+          },
         },
       },
       plugins: [react()],
@@ -33,7 +39,24 @@ export default defineConfig(({ mode }) => {
         }
       },
       build: {
-        chunkSizeWarningLimit: 2000, // raise limit to reduce noisy chunk size warnings
+        chunkSizeWarningLimit: 2000,
+        minify: 'terser',
+        terserOptions: {
+          compress: {
+            drop_console: true,
+            drop_debugger: true
+          }
+        },
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              'vendor-react': ['react', 'react-dom'],
+              'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/database'],
+              'vendor-capacitor': ['@capacitor/core', '@capacitor/geolocation', '@capacitor/local-notifications'],
+              'vendor-ui': ['lucide-react']
+            }
+          }
+        }
       }
     };
 });

@@ -32,7 +32,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, setActiveTab, i
 
   return (
     // Added pb-[calc(1rem+env(safe-area-inset-bottom))] for modern mobile safe areas
-    <div className={`w-full bg-white border-t border-gray-200 px-4 py-2 flex justify-between items-center pb-[calc(1rem+env(safe-area-inset-bottom))] ${className}`}>
+    <div className={`fixed bottom-0 left-0 right-0 w-full bg-white border-t border-gray-200 px-4 py-2 flex justify-between items-center pb-[calc(1rem+env(safe-area-inset-bottom))] ${className}`}>
       {navItems.map((item) => {
         const Icon = item.icon;
         const isActive = activeTab === item.id;

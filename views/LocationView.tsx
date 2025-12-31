@@ -39,101 +39,147 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
 
   // Initialize Leaflet Map
   useEffect(() => {
-    if (mapContainerRef.current && !mapInstanceRef.current && typeof L !== 'undefined') {
-        // Ensure container has dimensions
-        if (mapContainerRef.current.offsetWidth === 0 || mapContainerRef.current.offsetHeight === 0) {
-            console.warn('[LocationView] Map container has zero dimensions, skipping initialization');
-            return;
-        }
-
-        try {
-            // Create Map
-            const map = L.map(mapContainerRef.current, {
-                zoomControl: false,
-                attributionControl: false
-            }).setView([status.location.lat, status.location.lng], 16);
-
-            // Add Tile Layer (OpenStreetMap)
-            const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19,
-            });
-            
-            // Mock Satellite (Hybrid) - Using Esri World Imagery for variety
-            const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                maxZoom: 19
-            });
-
-            // Store layers to toggle later
-            map.layers = { street: streetLayer, satellite: satelliteLayer };
-            streetLayer.addTo(map);
-
-            mapInstanceRef.current = map;
-
-            // Create Custom Avatar Icon
-            const createIcon = (isAlert: boolean) => {
-                return L.divIcon({
-                    className: 'custom-pin',
-                    html: `
-                        <div class="relative flex items-center justify-center w-16 h-16 -translate-x-1/4 -translate-y-1/4">
-                            <div class="absolute w-full h-full rounded-full ${isAlert ? 'bg-red-500' : 'bg-blue-500'} opacity-30 animate-ping"></div>
-                            <div class="absolute w-12 h-12 rounded-full ${isAlert ? 'bg-red-500' : 'bg-blue-500'} opacity-20 animate-pulse"></div>
-                            <div class="relative w-10 h-10 bg-white rounded-full border-2 ${isAlert ? 'border-red-500' : 'border-white'} shadow-lg overflow-hidden">
-                                <img src="${seniorProfile?.avatar || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNFNUU3RUIiLz48Y2lyY2xlIGN4PSI1MCIgY3k9IjM1IiByPSIxNSIgZmlsbD0iIzlDQTNCNCIvPjxwYXRoIGQ9Ik0yMCA4NUMyMCA2NS4xMTggMzMuNDMxNSA1MCA1MCA1MEM2Ni41Njg1IDUwIDgwIDY1LjExOCA4MCA4NVYxMDBIMjBWODVaIiBmaWxsPSIjOUNBM0I0Ii8+PC9zdmc+'}" class="w-full h-full object-cover" />
-                            </div>
-                        </div>
-                    `,
-                    iconSize: [40, 40],
-                    iconAnchor: [20, 20]
-                });
-            };
-
-            // Add Marker
-            markerRef.current = L.marker([status.location.lat, status.location.lng], {
-                icon: createIcon(isEmergency)
-            }).addTo(map);
-
-            console.log('[LocationView] Map initialized successfully');
-        } catch (e) {
-            console.error('[LocationView] Map initialization error:', e);
-        }
+    if (!mapContainerRef.current || typeof L === 'undefined') return;
+    
+    // Clear container and previous instance
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.remove();
+      mapInstanceRef.current = null;
+      markerRef.current = null;
     }
+    if (mapContainerRef.current) {
+      mapContainerRef.current.innerHTML = '';
+    }
+
+    // Initialize with delay to ensure container has proper dimensions
+    const timer = setTimeout(() => {
+      if (!mapContainerRef.current) {
+        console.warn('[LocationView] Map container ref is null');
+        return;
+      }
+
+      try {
+        const rect = mapContainerRef.current.getBoundingClientRect();
+        const computed = window.getComputedStyle(mapContainerRef.current);
+        console.log('[LocationView] Container rect:', {
+          width: rect.width,
+          height: rect.height,
+          top: rect.top,
+          left: rect.left
+        });
+        console.log('[LocationView] Container computed style:', {
+          width: computed.width,
+          height: computed.height,
+          display: computed.display,
+          position: computed.position
+        });
+        console.log('[LocationView] offsetWidth:', mapContainerRef.current.offsetWidth, 'offsetHeight:', mapContainerRef.current.offsetHeight);
+        
+        if (rect.width === 0 || rect.height === 0) {
+          console.warn('[LocationView] Container has zero dimensions, retrying...');
+          // Retry after another delay
+          setTimeout(() => {
+            if (!mapContainerRef.current) return;
+            initMap();
+          }, 200);
+          return;
+        }
+        
+        initMap();
+      } catch (e) {
+        console.error('[LocationView] Pre-init error:', e);
+      }
+    }, 200);
+
+    const initMap = () => {
+      if (!mapContainerRef.current) return;
+      
+      try {
+        console.log('[LocationView] Initializing map with location:', status.location.lat, status.location.lng);
+        
+        // Create Map with light background
+        const map = L.map(mapContainerRef.current, {
+          zoomControl: false,
+          attributionControl: false,
+          preferCanvas: true
+        }).setView([status.location.lat, status.location.lng], 16);
+
+        // Add Tile Layer (OpenStreetMap) with error handling
+        const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '',
+          errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          crossOrigin: true
+        });
+        
+        streetLayer.on('load', () => {
+          console.log('[LocationView] Street layer loaded');
+        });
+        
+        streetLayer.on('error', (e) => {
+          console.error('[LocationView] Street layer error:', e);
+        });
+        
+        streetLayer.addTo(map);
+        
+        // Satellite Layer
+        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+          maxZoom: 19,
+          attribution: '',
+          errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          crossOrigin: true
+        });
+
+        // Store layers to toggle later
+        (map as any).layers = { street: streetLayer, satellite: satelliteLayer };
+
+        mapInstanceRef.current = map;
+
+        // Create Custom Avatar Icon
+        const createIcon = (isAlert: boolean) => {
+          return L.divIcon({
+            className: 'custom-pin',
+            html: `
+              <div class="relative flex items-center justify-center w-16 h-16 -translate-x-1/4 -translate-y-1/4">
+                <div class="absolute w-full h-full rounded-full ${isAlert ? 'bg-red-500' : 'bg-blue-500'} opacity-30 animate-ping"></div>
+                <div class="absolute w-12 h-12 rounded-full ${isAlert ? 'bg-red-500' : 'bg-blue-500'} opacity-20 animate-pulse"></div>
+                <div class="relative w-10 h-10 bg-white rounded-full border-2 ${isAlert ? 'border-red-500' : 'border-white'} shadow-lg overflow-hidden">
+                  <img src="${seniorProfile?.avatar || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNFNUU3RUIiLz48Y2lyY2xlIGN4PSI1MCIgY3k9IjM1IiByPSIxNSIgZmlsbD0iIzlDQTNCNCIvPjxwYXRoIGQ9Ik0yMCA4NUMyMCA2NS4xMTggMzMuNDMxNSA1MCA1MCA1MEM2Ni41Njg1IDUwIDgwIDY1LjExOCA4MCA4NVYxMDBIMjBWODVaIiBmaWxsPSIjOUNBM0I0Ii8+PC9zdmc+'}" class="w-full h-full object-cover" />
+                </div>
+              </div>
+            `,
+            iconSize: [40, 40],
+            iconAnchor: [20, 20]
+          });
+        };
+
+        // Add Marker
+        markerRef.current = L.marker([status.location.lat, status.location.lng], {
+          icon: createIcon(isEmergency)
+        }).addTo(map);
+
+        // Force resize after a bit longer to ensure full layout
+        setTimeout(() => {
+          console.log('[LocationView] Calling invalidateSize');
+          map.invalidateSize();
+          console.log('[LocationView] invalidateSize complete, map size:', map.getSize());
+        }, 200);
+
+        console.log('[LocationView] Map initialized successfully');
+      } catch (e) {
+        console.error('[LocationView] Map initialization error:', e);
+      }
+    };
 
     return () => {
-        // Cleanup if needed
-    }
-  }, [status.location.lat, status.location.lng]);
-
-  // Update Map Position & Marker
-  useEffect(() => {
-    if (mapInstanceRef.current && markerRef.current) {
-        const map = mapInstanceRef.current;
-        const newLatLng = [status.location.lat, status.location.lng];
-
-        // Smooth pan
-        map.panTo(newLatLng);
-        
-        // Move marker
-        markerRef.current.setLatLng(newLatLng);
-
-        // Update Icon style based on emergency status
-        const createIcon = (isAlert: boolean) => {
-             return L.divIcon({
-                className: 'custom-pin',
-                html: `
-                    <div class="relative flex items-center justify-center w-16 h-16 -ml-3 -mt-3">
-                        <div class="absolute w-full h-full rounded-full ${isAlert ? 'bg-red-500' : 'bg-blue-500'} opacity-30 animate-ping"></div>
-                        <div class="relative w-10 h-10 bg-white rounded-full border-2 ${isAlert ? 'border-red-500' : 'border-white'} shadow-lg overflow-hidden">
-                            <img src="${seniorProfile?.avatar || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNFNUU3RUIiLz48Y2lyY2xlIGN4PSI1MCIgY3k9IjM1IiByPSIxNSIgZmlsbD0iIzlDQTNCNCIvPjxwYXRoIGQ9Ik0yMCA4NUMyMCA2NS4xMTggMzMuNDMxNSA1MCA1MCA1MEM2Ni41Njg1IDUwIDgwIDY1LjExOCA4MCA4NVYxMDBIMjBWODVaIiBmaWxsPSIjOUNBM0I0Ii8+PC9zdmc+'}" class="w-full h-full object-cover" />
-                        </div>
-                    </div>
-                `,
-                iconSize: [40, 40],
-                iconAnchor: [20, 20]
-            });
-        };
-        markerRef.current.setIcon(createIcon(isEmergency));
-    }
-  }, [status.location, isEmergency]);
+      clearTimeout(timer);
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+        markerRef.current = null;
+      }
+    };
+  }, [status.location.lat, status.location.lng, isEmergency, seniorProfile?.avatar]);
 
   // Handle Map Type Toggle
   useEffect(() => {
@@ -172,9 +218,9 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 relative overflow-hidden">
+    <div className="flex flex-col h-screen bg-gray-50 relative w-full">
       {/* Navbar overlay */}
-      <div className="absolute top-0 left-0 right-0 z-[1000] px-4 py-4 flex items-center justify-between pointer-events-none">
+      <div className="absolute top-0 left-0 right-0 z-40 px-4 py-4 flex items-center justify-between pointer-events-none">
         <button className="p-2 bg-white/90 backdrop-blur-sm rounded-full shadow-sm pointer-events-auto hover:bg-white transition-colors">
            <svg className="w-6 h-6 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
@@ -208,13 +254,13 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
       </div>
 
       {/* Map Layer */}
-      <div className="absolute inset-0 z-0 bg-gray-200">
-         <div ref={mapContainerRef} className="w-full h-full outline-none" />
+      <div className="flex-1 relative bg-blue-100 w-full" style={{ height: 'calc(100% - 160px)' }}>
+         <div ref={mapContainerRef} className="absolute inset-0 w-full h-full outline-none" style={{ background: '#e8f4f8', height: '100%', width: '100%' }} />
       </div>
 
       {/* Bottom Information Card (Collapsible) */}
       <div 
-        className={`absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-[0_-5px_30px_rgba(0,0,0,0.15)] z-[1000] transition-all duration-300 ease-in-out flex flex-col ${isPanelExpanded ? 'h-[75%]' : 'h-[160px]'}`}
+        className={`absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-[0_-5px_30px_rgba(0,0,0,0.15)] z-40 transition-all duration-300 ease-in-out flex flex-col ${isPanelExpanded ? 'h-[75%]' : 'h-[160px]'}`}
       >
           {/* Drag Handle Area */}
           <div 
