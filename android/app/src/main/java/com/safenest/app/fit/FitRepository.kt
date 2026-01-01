@@ -4,15 +4,21 @@ import android.content.Context
 import android.util.Log
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.fitness.Fitness
-import com.google.android.gms.fitness.data.*
+import com.google.android.gms.fitness.data.DataPoint
+import com.google.android.gms.fitness.data.DataSet
+import com.google.android.gms.fitness.data.DataSource
+import com.google.android.gms.fitness.data.DataType
+import com.google.android.gms.fitness.data.Field
 import com.google.android.gms.fitness.request.DataReadRequest
 import com.google.android.gms.fitness.request.DataUpdateRequest
 import com.google.android.gms.fitness.request.OnDataPointListener
 import com.google.android.gms.fitness.request.SessionInsertRequest
 import com.google.android.gms.tasks.Tasks
+import com.safenest.app.fit.PhoneStepCounter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 import java.util.concurrent.TimeUnit
 import java.util.*
 
@@ -65,8 +71,18 @@ class FitRepository(private val context: Context) {
         }
     }
 
-    /** Reads today's total steps using readDailyTotal */
+    /** Reads today's total steps.
+     * Priority: phone sensor (TYPE_STEP_COUNTER) -> Google Fit daily total (fallback)
+     */
     suspend fun getTodaySteps(): Int = withContext(Dispatchers.IO) {
+        // Try phone hardware step counter first (no Fit required)
+        try {
+            PhoneStepCounter.getTodaySteps(context)?.let { return@withContext it }
+        } catch (e: Exception) {
+            Log.w(TAG, "Phone step counter failed: ${e.message}")
+        }
+
+        // Fallback to Google Fit steps
         try {
             val acct = getAccount()
             if (!GoogleSignIn.hasPermissions(acct, fitnessOptions)) throw NotSignedInException()

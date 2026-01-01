@@ -133,3 +133,77 @@ export interface MedicineHistory {
   compliancePercentage: number; // 0-100
   mostMissedTime?: string; // Time most often missed
 }
+
+// ===== HEALTH DATA & VITALS =====
+export interface VitalReading {
+  id: string;
+  type: 'bloodPressure' | 'temperature' | 'weight' | 'bloodSugar' | 'heartRate' | 'spo2' | 'stress';
+  value: number | { systolic: number; diastolic: number }; // BP is object, others are numbers
+  timestamp: Date;
+  source: 'smartwatch' | 'manual'; // Where data came from
+  enteredBy?: 'senior' | 'caregiver'; // Who entered it (for manual entries)
+  notes?: string;
+}
+
+export interface HealthPrediction {
+  id: string;
+  type: 'hypertension' | 'diabetes' | 'cardiac' | 'infection' | 'malnutrition' | 'medication';
+  severity: 'low' | 'medium' | 'high';
+  probability: number; // 0-100%
+  description: string;
+  recommendation: string;
+  basedOn: string[]; // Data points used for prediction
+  timestamp: Date;
+}
+
+export interface HealthRiskScore {
+  overall: number; // 0-100
+  cardiovascular: number; // 0-100
+  metabolic: number; // 0-100
+  compliance: number; // 0-100
+  trend: 'improving' | 'stable' | 'declining';
+}
+
+// ===== HEALTH REPORTS =====
+export interface HealthReport {
+  id: string;
+  householdId: string;
+  seniorId: string;
+  period: 'weekly' | 'monthly';
+  startDate: Date;
+  endDate: Date;
+  generatedAt: Date;
+  
+  // Vital averages for the period
+  vitalsData: {
+    bloodPressure?: { avgSystolic: number; avgDiastolic: number };
+    heartRate?: number;
+    temperature?: number;
+    weight?: number;
+    bloodSugar?: number;
+    spo2?: number;
+  };
+  
+  // Predictions for the period
+  predictions: HealthPrediction[];
+  
+  // Risk score for the period
+  riskScore: HealthRiskScore;
+  
+  // Medication compliance
+  medicationCompliance: number; // 0-100%
+  
+  // Summary insights
+  summary: string;
+  recommendations: string[];
+}
+
+export interface ReportNotification {
+  id: string;
+  householdId: string;
+  seniorId: string;
+  reportId: string;
+  period: 'weekly' | 'monthly';
+  createdAt: Date;
+  read: boolean;
+}

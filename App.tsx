@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { UserRole, AppStatus, SeniorStatus, ActivityItem, UserProfile, Reminder, Medicine, MedicineLog } from './types';
+import { UserRole, AppStatus, SeniorStatus, ActivityItem, UserProfile, Reminder, Medicine, MedicineLog, VitalReading } from './types';
 import { SeniorHome } from './views/SeniorHome';
 import { ProfileView } from './views/ProfileView';
 import { FallCountdown } from './views/FallCountdown';
@@ -206,6 +206,9 @@ const App = () => {
   const [allMedicineLogs, setAllMedicineLogs] = useState<{ [householdId: string]: MedicineLog[] }>({});
   const [allMedicines, setAllMedicines] = useState<{ [householdId: string]: Medicine[] }>({});
   const initializedLogsRef = useRef<{ [householdId: string]: boolean }>({});
+  
+  // Vitals State
+  const [vitalReadings, setVitalReadings] = useState<VitalReading[]>([]);
   
   // Household Members and Contacts
   const [householdMembers, setHouseholdMembers] = useState<HouseholdMember[]>([]);
@@ -1551,6 +1554,27 @@ const App = () => {
     return () => unsub();
   }, [householdId]);
 
+  // Subscribe to vitals
+  useEffect(() => {
+    if (!householdId) return;
+    const vitalsRef = ref(db, `households/${householdId}/vitals`);
+    const unsub = onValue(vitalsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const vitalsList = Object.values(data).map((vital: any) => ({
+          ...vital,
+          timestamp: new Date(vital.timestamp),
+        })) as VitalReading[];
+        console.log('[App] onValue vitals received, count=', vitalsList.length);
+        setVitalReadings(vitalsList);
+      } else {
+        console.log('[App] onValue vitals received: empty');
+        setVitalReadings([]);
+      }
+    });
+    return () => unsub();
+  }, [householdId]);
+
   // Multi-household support for caregivers - fetch senior info from all households
   useEffect(() => {
     if (role !== UserRole.CAREGIVER || householdIds.length === 0) return;
@@ -1832,6 +1856,34 @@ const App = () => {
       });
   };
 
+  // Vitals handler
+  const handleAddVital = (vital: Omit<VitalReading, 'id' | 'timestamp'>) => {
+    if (!householdId) {
+      console.error('[handleAddVital] No householdId set, aborting');
+      return;
+    }
+    
+    const vitalId = Date.now().toString();
+    const timestamp = new Date();
+    const vitalWithId: VitalReading = { ...vital, id: vitalId, timestamp };
+    
+    // Prepare for Firebase (convert Date to ISO string)
+    const vitalForDB = {
+      ...vitalWithId,
+      timestamp: timestamp.toISOString(),
+    };
+    
+    console.log('[handleAddVital] Writing vital:', vitalForDB);
+    set(ref(db, `households/${householdId}/vitals/${vitalId}`), vitalForDB)
+      .then(() => {
+        console.log('[handleAddVital] Write success:', vitalId);
+        setVitalReadings(prev => [...prev, vitalWithId]);
+      })
+      .catch((err) => {
+        console.error('[handleAddVital] Write failed:', err);
+      });
+  };
+
   const handleSwitchHousehold = (newHouseholdId: string) => {
     console.log('[App] Switching to household:', sanitizeForLog(newHouseholdId));
     localStorage.setItem('safenest_active_household', newHouseholdId);
@@ -2067,6 +2119,8 @@ const App = () => {
             onAddMedicine={handleAddMedicine}
             onUpdateMedicine={handleUpdateMedicine}
             onDeleteMedicine={handleDeleteMedicine}
+            vitalReadings={vitalReadings}
+            onAddVital={handleAddVital}
         />
       );
     }
@@ -2097,25 +2151,31 @@ const App = () => {
             />
         );
       case 'vitals':
-        return <VitalsView status={seniorStatus} isFitConnected={isFitConnected} onRefresh={async () => {
-          try {
-            const ok = await googleFitService.hasPermissions();
-            setIsFitConnected(ok);
-            if (!ok) {
-              alert('Google Fit is not connected or permissions are missing');
-              return;
-            }
+        return <VitalsView 
+          status={seniorStatus} 
+          isFitConnected={isFitConnected} 
+          vitalReadings={vitalReadings}
+          onAddVital={handleAddVital}
+          enteredBy="senior"
+          onRefresh={async () => {
+            try {
+              const ok = await googleFitService.hasPermissions();
+              setIsFitConnected(ok);
+              if (!ok) {
+                alert('Google Fit is not connected or permissions are missing');
+                return;
+              }
 
-            const vitals = await googleFitService.getVitals();
-            if (vitals) {
-              setSeniorStatus(prev => ({ ...prev, steps: vitals.steps, heartRate: vitals.heartRate || prev.heartRate, lastUpdate: new Date() }));
-            } else {
-              console.warn('No vitals from Google Fit');
+              const vitals = await googleFitService.getVitals();
+              if (vitals) {
+                setSeniorStatus(prev => ({ ...prev, steps: vitals.steps, heartRate: vitals.heartRate || prev.heartRate, lastUpdate: new Date() }));
+              } else {
+                console.warn('No vitals from Google Fit');
+              }
+            } catch (e) {
+              console.error('Sync failed', e);
             }
-          } catch (e) {
-            console.error('Sync failed', e);
-          }
-        }} />;
+          }} />;
       case 'carers':
         return <ContactsView caregivers={householdMembers.filter(m => m.role === UserRole.CAREGIVER)} contacts={contacts} onAddContact={handleAddContact} />;
       case 'settings':

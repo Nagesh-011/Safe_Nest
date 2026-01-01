@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Phone, Navigation, Battery, Heart, Layers, Plus, CheckCircle, XCircle, Clock, LogOut, Map as MapIcon, Pill, Activity, Calendar, Bell, Home, Settings, MapPin } from 'lucide-react';
-import { SeniorStatus, ActivityItem, Reminder, HouseholdMember, UserRole, Medicine, MedicineLog } from '../types';
+import { SeniorStatus, ActivityItem, Reminder, HouseholdMember, UserRole, Medicine, MedicineLog, VitalReading } from '../types';
 import { BottomNav } from '../components/BottomNav';
 import { MedicineManager } from './MedicineManager';
-import { MedicineCompliance } from './MedicineCompliance';
+import { ComplianceAnalytics } from './ComplianceAnalytics';
+import { CaregiverVitalsView } from './CaregiverVitalsView';
+import { ManualVitalsEntry } from './ManualVitalsEntry';
 
 declare var L: any;
 
@@ -26,6 +28,8 @@ interface CaregiverDashboardProps {
   onAddMedicine?: (medicine: Medicine) => void;
   onUpdateMedicine?: (medicine: Medicine) => void;
   onDeleteMedicine?: (medicineId: string) => void;
+  vitalReadings?: VitalReading[];
+  onAddVital?: (vital: Omit<VitalReading, 'id' | 'timestamp'>) => void;
 }
 
 export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ 
@@ -46,18 +50,19 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
     medicineLogs = [],
     onAddMedicine,
     onUpdateMedicine,
-    onDeleteMedicine
+    onDeleteMedicine,
+    vitalReadings = [],
+    onAddVital
 }) => {
   useEffect(() => {
     console.log('[CaregiverDashboard] onSignOut:', typeof onSignOut);
   }, [onSignOut]);
 
-  const [activeTab, setActiveTab] = useState<'home' | 'map' | 'schedule' | 'medicine' | 'compliance' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'map' | 'schedule' | 'medicine' | 'vitals' | 'compliance' | 'settings'>('home');
   const [showAddModal, setShowAddModal] = useState(false);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
   const [selectedSeniorId, setSelectedSeniorId] = useState<string | null>(null);
-  
-  // New Reminder Form State
+
   const [newTitle, setNewTitle] = useState('');
   const [newTime, setNewTime] = useState('');
   const [newInstructions, setNewInstructions] = useState('');
@@ -839,27 +844,21 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
           </div>
       )}
 
+      {/* CONTENT: VITALS VIEW */}
+      {activeTab === 'vitals' && (
+          <CaregiverVitalsView 
+            vitalReadings={vitalReadings || []}
+            onAddVital={onAddVital || (() => {})}
+          />
+      )}
+
       {/* CONTENT: COMPLIANCE ANALYTICS */}
       {activeTab === 'compliance' && (
-          <div className="flex-1 overflow-y-auto">
-            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
-              <p className="text-sm text-yellow-800">Debug: Medicines: {medicines.length}, Logs: {medicineLogs.length}</p>
-            </div>
-            {medicines.length > 0 && (
-              <MedicineCompliance 
-                medicines={medicines}
-                medicineLogs={medicineLogs}
-              />
-            )}
-            {medicines.length === 0 && (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center text-gray-400">
-                  <Pill size={48} className="mx-auto mb-4 opacity-50" />
-                  <p className="font-semibold">No medicines added yet</p>
-                </div>
-              </div>
-            )}
-          </div>
+          <ComplianceAnalytics 
+            medicines={medicines}
+            medicineLogs={medicineLogs}
+            vitalReadings={vitalReadings || []}
+          />
       )}
 
       {/* CONTENT: SETTINGS VIEW */}
@@ -934,6 +933,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
             { id: 'home', icon: Home, label: 'Home' },
             { id: 'map', icon: MapIcon, label: 'Location' },
             { id: 'medicine', icon: Pill, label: 'Medicines' },
+            { id: 'vitals', icon: Heart, label: 'Vitals' },
             { id: 'compliance', icon: Activity, label: 'Compliance' },
             { id: 'settings', icon: Settings, label: 'Settings' }
           ]}

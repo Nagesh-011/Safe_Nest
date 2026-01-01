@@ -20,6 +20,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSignOut, onJoinAno
   const [notifications, setNotifications] = useState(true);
 
     // Language selection limited to English, Hindi, Marathi
+  
+  const getSensitivityDescription = (level: string) => {
+    switch(level) {
+      case 'Low':
+        return '📊 Only major falls detected. Best for active seniors. ~99% less false alarms.';
+      case 'High':
+        return '⚠️ Very sensitive. Detects minor falls & stumbles. ~5% false alarms.';
+      case 'Medium':
+      default:
+        return '✓ Balanced sensitivity. Recommended for most seniors.';
+    }
+  };
 
   return (
     <div className="pb-24 pt-6 px-4 space-y-6 animate-fade-in bg-gray-50 min-h-full">
@@ -31,25 +43,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSignOut, onJoinAno
         <section>
              <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-1">{t.safetyDetection}</h2>
              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                <div className="p-4 border-b border-gray-100">
+                    <div className="flex items-center gap-3 mb-3">
                         <div className="bg-blue-100 p-2 rounded-lg text-blue-600">
                             <Activity size={20} />
                         </div>
-                        <div>
+                        <div className="flex-1">
                             <p className="font-semibold text-gray-900">{t.fallSensitivity}</p>
                             <p className="text-xs text-gray-500">{t.adjustDetection}</p>
                         </div>
                     </div>
-                    <select 
-                        value={fallSensitivity}
-                        onChange={(e) => setFallSensitivity(e.target.value)}
-                        className="bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
-                    >
-                        <option>Low</option>
-                        <option>Medium</option>
-                        <option>High</option>
-                    </select>
+                    
+                    {/* Sensitivity Options with descriptions */}
+                    <div className="space-y-2 mt-3">
+                        {['Low', 'Medium', 'High'].map((level) => (
+                            <label key={level} className="flex items-center p-3 border-2 rounded-lg cursor-pointer transition-all" style={{borderColor: fallSensitivity === level ? '#3b82f6' : '#e5e7eb', backgroundColor: fallSensitivity === level ? '#eff6ff' : '#fff'}}>
+                                <input 
+                                    type="radio" 
+                                    name="sensitivity" 
+                                    value={level}
+                                    checked={fallSensitivity === level}
+                                    onChange={(e) => setFallSensitivity(e.target.value)}
+                                    className="w-4 h-4 cursor-pointer"
+                                />
+                                <div className="ml-3 flex-1">
+                                    <p className="font-semibold text-gray-900">{level}</p>
+                                    <p className="text-xs text-gray-600">{getSensitivityDescription(level)}</p>
+                                </div>
+                            </label>
+                        ))}
+                    </div>
+                    
+                    {/* Info box */}
+                    <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
+                        <strong>💡 How it works:</strong> SafeNest uses accelerometer + gyroscope + pressure sensors to detect falls accurately. Adjust based on your activity level.
+                    </div>
                 </div>
 
                 <div className="p-4 border-b border-gray-100 flex items-center justify-between">

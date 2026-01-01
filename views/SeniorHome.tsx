@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { Heart, Activity, MapPin, Zap, LogOut, Mic, Pill } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Heart, Activity, MapPin, Zap, LogOut, Mic, Pill, AlertCircle } from 'lucide-react';
 import { SeniorStatus, UserProfile, Medicine, MedicineLog } from '../types';
 import { MedicineReminders } from './MedicineReminders';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -44,6 +44,7 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
   onSkipMedicine
 }) => {
   const { t } = useLanguage();
+  
   useEffect(() => {
     console.log('[SeniorHome] onSignOut:', typeof onSignOut);
   }, [onSignOut]);
@@ -189,7 +190,6 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
           <div className="absolute inset-8 bg-gradient-to-br from-red-500 to-red-600 rounded-full shadow-xl flex flex-col items-center justify-center border-4 border-red-400">
             <span className="text-5xl font-extrabold text-white tracking-widest mb-1">{t.sos}</span>
             <span className="text-lg font-bold text-white/90">{t.help}</span>
-            
           </div>
         </button>
       </div>
@@ -208,29 +208,59 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
           <h2 className="text-lg font-semibold text-gray-900">{t.myVitals}</h2>
         </div>
         <div className="grid grid-cols-2 gap-4">
+          {/* Heart Rate Card */}
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-32">
-            <div className="flex justify-between items-start">
+            <div className="flex justify-between items-start mb-2">
               <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center">
                 <Heart size={20} className="text-red-500" fill="currentColor" />
               </div>
-              <span className="text-[10px] font-semibold text-gray-400 uppercase">{t.normal}</span>
+              {isFitConnected && status.heartRate && (
+                <span className="text-[10px] font-semibold text-green-600 uppercase bg-green-50 px-2 py-0.5 rounded-full">{t.normal}</span>
+              )}
             </div>
             <div>
-              <span className="text-4xl font-bold text-gray-900">{isFitConnected ? (status.heartRate ?? '--') : 'Not loaded or connected'}</span>
-              <span className="text-sm font-medium text-gray-500 ml-1">{t.bpm}</span>
+              {isFitConnected ? (
+                <>
+                  <div className="flex items-end gap-1">
+                    <span className="text-4xl font-bold text-gray-900">{status.heartRate ?? '--'}</span>
+                    <span className="text-sm font-medium text-gray-500 mb-1">{t.bpm}</span>
+                  </div>
+                  <p className="text-xs font-medium text-gray-400 mt-1">Heart Rate</p>
+                </>
+              ) : (
+                <div className="text-center py-2">
+                  <div className="text-2xl font-bold text-gray-300 mb-1">--</div>
+                  <p className="text-[10px] font-semibold text-gray-400">Connect smartwatch</p>
+                </div>
+              )}
             </div>
           </div>
           
+          {/* SpO2 Card */}
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-32">
-            <div className="flex justify-between items-start">
+            <div className="flex justify-between items-start mb-2">
               <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center">
                 <div className="text-blue-500 font-bold text-lg">O₂</div>
               </div>
-              <span className="text-[10px] font-semibold text-gray-400 uppercase">{t.good}</span>
+              {isFitConnected && status.spo2 && (
+                <span className="text-[10px] font-semibold text-green-600 uppercase bg-green-50 px-2 py-0.5 rounded-full">{t.good}</span>
+              )}
             </div>
             <div>
-              <span className="text-4xl font-bold text-gray-900">{isFitConnected ? (status.spo2 ?? '--') + '%': 'Not loaded or connected'}</span>
-              <span className="text-sm font-medium text-gray-500 ml-1">SpO₂</span>
+              {isFitConnected ? (
+                <>
+                  <div className="flex items-end gap-1">
+                    <span className="text-4xl font-bold text-gray-900">{status.spo2 ?? '--'}</span>
+                    <span className="text-sm font-medium text-gray-500 mb-1">%</span>
+                  </div>
+                  <p className="text-xs font-medium text-gray-400 mt-1">Blood Oxygen</p>
+                </>
+              ) : (
+                <div className="text-center py-2">
+                  <div className="text-2xl font-bold text-gray-300 mb-1">--</div>
+                  <p className="text-[10px] font-semibold text-gray-400">Connect smartwatch</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

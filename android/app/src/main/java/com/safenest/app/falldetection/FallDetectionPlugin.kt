@@ -4,8 +4,8 @@ import android.content.Intent
 import com.getcapacitor.Bridge
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
+import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
-import com.getcapacitor.annotation.PluginMethod
 
 @CapacitorPlugin(name = "FallDetection")
 class FallDetectionPlugin : Plugin() {

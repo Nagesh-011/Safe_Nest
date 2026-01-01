@@ -1,14 +1,64 @@
-import React from 'react';
-import { Heart, Droplet, CheckCircle, HelpCircle, Activity, RefreshCw, Moon, Thermometer, Gauge } from 'lucide-react';
-import { SeniorStatus } from '../types';
+import React, { useState } from 'react';
+import { Heart, Droplet, CheckCircle, HelpCircle, Activity, RefreshCw, Moon, Thermometer, Gauge, Plus } from 'lucide-react';
+import { SeniorStatus, VitalReading } from '../types';
+import { ManualVitalsEntry } from './ManualVitalsEntry';
 
 interface VitalsViewProps {
   status: SeniorStatus;
   onRefresh?: () => void;
   isFitConnected?: boolean;
+  vitalReadings?: VitalReading[];
+  onAddVital?: (vital: Omit<VitalReading, 'id' | 'timestamp'>) => void;
+  enteredBy?: 'senior' | 'caregiver';
 }
 
-export const VitalsView: React.FC<VitalsViewProps> = ({ status, onRefresh, isFitConnected = false }) => {
+export const VitalsView: React.FC<VitalsViewProps> = ({ 
+  status, 
+  onRefresh, 
+  isFitConnected = false, 
+  vitalReadings = [],
+  onAddVital,
+  enteredBy = 'senior'
+}) => {
+  const [showVitalsEntry, setShowVitalsEntry] = useState(false);
+
+  // Get latest manual vitals
+  const getLatestVital = (type: 'bloodPressure' | 'temperature' | 'weight' | 'bloodSugar') => {
+    const filtered = vitalReadings
+      .filter(v => v.type === type && v.source === 'manual')
+      .sort((a, b) => {
+        const dateA = a.timestamp instanceof Date ? a.timestamp : new Date(a.timestamp);
+        const dateB = b.timestamp instanceof Date ? b.timestamp : new Date(b.timestamp);
+        return dateB.getTime() - dateA.getTime();
+      });
+    return filtered[0];
+  };
+
+  const latestBP = getLatestVital('bloodPressure');
+  const latestTemp = getLatestVital('temperature');
+  const latestWeight = getLatestVital('weight');
+  const latestBG = getLatestVital('bloodSugar');
+
+  const formatTimestamp = (timestamp: Date | string) => {
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} mins ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours} hours ago`;
+    return date.toLocaleDateString();
+  };
+
+  const handleSaveVital = (vital: Omit<VitalReading, 'id' | 'timestamp'>) => {
+    if (onAddVital) {
+      onAddVital(vital);
+    }
+    setShowVitalsEntry(false);
+  };
+
   return (
     <div className="pb-24 pt-6 px-4 space-y-4 animate-fade-in bg-gray-50 min-h-full">
       
@@ -70,6 +120,123 @@ export const VitalsView: React.FC<VitalsViewProps> = ({ status, onRefresh, isFit
                   </div>
                   <div>
                       <h3 className="font-bold text-gray-900 text-lg">Blood Pressure</h3>
+                      <p className="text-gray-500 text-sm">{latestBP ? formatTimestamp(latestBP.timestamp) : 'No data'}</p>
+                  </div>
+              </div>
+              {latestBP && (
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                  (latestBP.value as { systolic: number }).systolic > 140 
+                    ? 'bg-red-100 text-red-700' 
+                    : 'bg-green-100 text-green-700'
+                }`}>
+                    {(latestBP.value as { systolic: number }).systolic > 140 ? 'Elevated' : 'Normal'}
+                </span>
+              )}
+          </div>
+
+          <div className="flex items-end gap-2 mb-2">
+              <span className="text-5xl font-black text-gray-900">
+                {latestBP 
+                  ? `${(latestBP.value as { systolic: number; diastolic: number }).systolic}/${(latestBP.value as { systolic: number; diastolic: number }).diastolic}`
+                  : '--/--'}
+              </span>
+              <span className="text-gray-500 font-bold mb-1">mmHg</span>
+          </div>
+
+          <p className="text-gray-500 text-sm font-medium">
+             {latestBP ? 'Recent reading' : 'Add your first blood pressure reading'}
+          </p>
+      </div>
+
+      {/* Temperature Card */}
+      {latestTemp && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-yellow-50 rounded-full flex items-center justify-center">
+                        <Thermometer className="text-yellow-500" size={24} />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-gray-900 text-lg">Temperature</h3>
+                        <p className="text-gray-500 text-sm">{formatTimestamp(latestTemp.timestamp)}</p>
+                    </div>
+                </div>
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                  (latestTemp.value as number) > 100.4 
+                    ? 'bg-red-100 text-red-700' 
+                    : 'bg-green-100 text-green-700'
+                }`}>
+                    {(latestTemp.value as number) > 100.4 ? 'Fever' : 'Normal'}
+                </span>
+            </div>
+
+            <div className="flex items-end gap-2 mb-2">
+                <span className="text-5xl font-black text-gray-900">{(latestTemp.value as number).toFixed(1)}</span>
+                <span className="text-gray-500 font-bold mb-1">°F</span>
+            </div>
+        </div>
+      )}
+
+      {/* Weight Card */}
+      {latestWeight && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-purple-50 rounded-full flex items-center justify-center">
+                        <Activity className="text-purple-500" size={24} />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-gray-900 text-lg">Weight</h3>
+                        <p className="text-gray-500 text-sm">{formatTimestamp(latestWeight.timestamp)}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex items-end gap-2 mb-2">
+                <span className="text-5xl font-black text-gray-900">{(latestWeight.value as number).toFixed(1)}</span>
+                <span className="text-gray-500 font-bold mb-1">kg</span>
+            </div>
+        </div>
+      )}
+
+      {/* Blood Sugar Card */}
+      {latestBG && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-pink-50 rounded-full flex items-center justify-center">
+                        <Droplet className="text-pink-500" size={24} />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-gray-900 text-lg">Blood Sugar</h3>
+                        <p className="text-gray-500 text-sm">{formatTimestamp(latestBG.timestamp)}</p>
+                    </div>
+                </div>
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                  (latestBG.value as number) > 180 || (latestBG.value as number) < 70
+                    ? 'bg-red-100 text-red-700' 
+                    : 'bg-green-100 text-green-700'
+                }`}>
+                    {(latestBG.value as number) > 180 ? 'High' : (latestBG.value as number) < 70 ? 'Low' : 'Normal'}
+                </span>
+            </div>
+
+            <div className="flex items-end gap-2 mb-2">
+                <span className="text-5xl font-black text-gray-900">{Math.round(latestBG.value as number)}</span>
+                <span className="text-gray-500 font-bold mb-1">mg/dL</span>
+            </div>
+        </div>
+      )}
+
+      {/* Blood Pressure Card (Old - Now below manual vitals) */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+          <div className="flex justify-between items-start mb-4">
+              <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-orange-50 rounded-full flex items-center justify-center">
+                      <Gauge className="text-orange-500" size={24} />
+                  </div>
+                  <div>
+                      <h3 className="font-bold text-gray-900 text-lg">Blood Pressure (Smartwatch)</h3>
                       <p className="text-gray-500 text-sm">Last checked 8am</p>
                   </div>
               </div>
@@ -221,6 +388,26 @@ export const VitalsView: React.FC<VitalsViewProps> = ({ status, onRefresh, isFit
       <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-all active:scale-95 mt-4">
           <RefreshCw size={20} /> Refresh Data
       </button>
+
+      {/* Add Vitals Button (Floating) */}
+      {onAddVital && (
+        <button
+          onClick={() => setShowVitalsEntry(true)}
+          className="fixed bottom-24 right-6 w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full shadow-lg shadow-blue-300 flex items-center justify-center text-white transition-all active:scale-95 hover:shadow-xl z-40"
+          aria-label="Add Vitals"
+        >
+          <Plus size={28} strokeWidth={2.5} />
+        </button>
+      )}
+
+      {/* Manual Vitals Entry Modal */}
+      {showVitalsEntry && onAddVital && (
+        <ManualVitalsEntry
+          onSave={handleSaveVital}
+          onClose={() => setShowVitalsEntry(false)}
+          enteredBy={enteredBy}
+        />
+      )}
 
     </div>
   );
