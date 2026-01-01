@@ -2,6 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { Pill, Clock, CheckCircle, X, AlertCircle } from 'lucide-react';
 import { Medicine, MedicineLog } from '../types';
 
+// Normalize time strings to HH:MM (zero padded)
+const normalizeTime = (time: string) => {
+  if (!time) return time;
+  const parts = time.split(':').map(s => parseInt(s, 10));
+  if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return time.trim();
+  return `${parts[0].toString().padStart(2,'0')}:${parts[1].toString().padStart(2,'0')}`;
+};
+
 interface MedicineRemindersProps {
   medicines: Medicine[];
   onMarkTaken: (medicineId: string, time: string) => void;
@@ -37,10 +45,15 @@ export const MedicineReminders: React.FC<MedicineRemindersProps> = ({
       // Check if medicine is active today
       if (startDate <= todayDate && (!endDate || endDate >= todayDate)) {
         medicine.times.forEach((time, timeIndex) => {
-          // Check log for this medicine dose
-          const log = medicineLogs.find(
-            (l) => l.medicineId === medicine.id && l.date.toDateString() === todayDate && l.scheduledTime === time
-          );
+          // Check log for this medicine dose (handle different stored date/time formats)
+          const log = medicineLogs.find((l) => {
+            const logDate = l.date instanceof Date ? l.date : new Date(l.date);
+            return (
+              l.medicineId === medicine.id &&
+              logDate.toDateString() === todayDate &&
+              normalizeTime(l.scheduledTime || '') === normalizeTime(time)
+            );
+          });
 
           medicines_for_today.push({
             medicine,

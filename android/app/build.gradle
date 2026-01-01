@@ -72,6 +72,10 @@ dependencies {
     
     // Firebase Cloud Messaging for background notifications
     implementation 'com.google.firebase:firebase-messaging:23.2.1'
+
+    // Google Fit & Sign-In
+    implementation 'com.google.android.gms:play-services-fitness:21.0.0'
+    implementation 'com.google.android.gms:play-services-auth:20.5.0'
 }
 
 apply from: 'capacitor.build.gradle'

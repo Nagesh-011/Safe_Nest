@@ -8,6 +8,7 @@ declare var L: any;
 
 interface SeniorHomeProps {
   status: SeniorStatus;
+  isFitConnected?: boolean;
   userProfile: UserProfile;
   onSignOut?: () => void;
   householdId?: string;
@@ -26,6 +27,7 @@ interface SeniorHomeProps {
 
 export const SeniorHome: React.FC<SeniorHomeProps> = ({ 
   status, 
+  isFitConnected = false,
   userProfile, 
   onSignOut,
   householdId,
@@ -48,44 +50,93 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
 
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
+  const miniMarkerRef = useRef<any>(null);
 
-  // Initialize Mini Map
+  // Initialize Mini Map with robust guards and updates
   useEffect(() => {
-    if (mapRef.current && !mapInstanceRef.current && typeof L !== 'undefined' && status.isLocationSharingEnabled) {
-       const map = L.map(mapRef.current, {
-           zoomControl: false,
-           attributionControl: false,
-           dragging: false,
-           touchZoom: false,
-           scrollWheelZoom: false,
-           doubleClickZoom: false,
-           boxZoom: false,
-           keyboard: false
-       }).setView([status.location.lat, status.location.lng], 15);
-
-       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-           maxZoom: 19,
-       }).addTo(map);
-
-       // Simple circle marker
-       L.circleMarker([status.location.lat, status.location.lng], {
-           radius: 8,
-           fillColor: "#3B82F6",
-           color: "#fff",
-           weight: 2,
-           opacity: 1,
-           fillOpacity: 0.8
-       }).addTo(map);
-
-       mapInstanceRef.current = map;
-    } else if (mapInstanceRef.current && !status.isLocationSharingEnabled) {
-        // Destroy map if disabled
+    // If location sharing disabled -> destroy map
+    if (!status.isLocationSharingEnabled) {
+      if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
-    } else if (mapInstanceRef.current && status.isLocationSharingEnabled) {
-        // Update center if moving
-        mapInstanceRef.current.setView([status.location.lat, status.location.lng], 15);
+        miniMarkerRef.current = null;
+      }
+      return;
     }
+
+    // Require valid coords before initializing
+    if (!status.location || typeof status.location.lat !== 'number' || typeof status.location.lng !== 'number') {
+      console.warn('[SeniorHome] Waiting for valid location to initialize mini map');
+      return;
+    }
+
+    // Wait until container has a size
+    if (!mapRef.current) return;
+    const rect = mapRef.current.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      // retry shortly
+      const retry = setTimeout(() => {
+        if (mapRef.current) {
+          // trigger effect by doing nothing (status.location will likely update and re-run effect)
+          // but also attempt initialization directly if possible
+          if (!mapInstanceRef.current && status.location && typeof status.location.lat === 'number') {
+            initMiniMap();
+          }
+        }
+      }, 200);
+      return () => clearTimeout(retry);
+    }
+
+    const initMiniMap = () => {
+      if (mapInstanceRef.current) return;
+
+      try {
+        const map = L.map(mapRef.current, {
+            zoomControl: false,
+            attributionControl: false,
+            dragging: false,
+            touchZoom: false,
+            scrollWheelZoom: false,
+            doubleClickZoom: false,
+            boxZoom: false,
+            keyboard: false
+        }).setView([status.location.lat, status.location.lng], 15);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+        }).addTo(map);
+
+        miniMarkerRef.current = L.circleMarker([status.location.lat, status.location.lng], {
+            radius: 8,
+            fillColor: "#3B82F6",
+            color: "#fff",
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.8
+        }).addTo(map);
+
+        mapInstanceRef.current = map;
+      } catch (e) {
+        console.error('[SeniorHome] Mini map init failed:', e);
+      }
+    };
+
+    // If not yet initialized, init it
+    if (!mapInstanceRef.current) {
+      initMiniMap();
+      return;
+    }
+
+    // If map exists, update center and marker
+    try {
+      mapInstanceRef.current.setView([status.location.lat, status.location.lng], 15);
+      if (miniMarkerRef.current) {
+        miniMarkerRef.current.setLatLng([status.location.lat, status.location.lng]);
+      }
+    } catch (e) {
+      console.error('[SeniorHome] Error updating mini map position:', e);
+    }
+
   }, [status.location, status.isLocationSharingEnabled]);
 
   return (
@@ -165,7 +216,7 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
               <span className="text-[10px] font-semibold text-gray-400 uppercase">{t.normal}</span>
             </div>
             <div>
-              <span className="text-4xl font-bold text-gray-900">{status.heartRate}</span>
+              <span className="text-4xl font-bold text-gray-900">{isFitConnected ? (status.heartRate ?? '--') : 'Not loaded or connected'}</span>
               <span className="text-sm font-medium text-gray-500 ml-1">{t.bpm}</span>
             </div>
           </div>
@@ -178,7 +229,7 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
               <span className="text-[10px] font-semibold text-gray-400 uppercase">{t.good}</span>
             </div>
             <div>
-              <span className="text-4xl font-bold text-gray-900">{status.spo2}<span className="text-lg">%</span></span>
+              <span className="text-4xl font-bold text-gray-900">{isFitConnected ? (status.spo2 ?? '--') + '%': 'Not loaded or connected'}</span>
               <span className="text-sm font-medium text-gray-500 ml-1">SpO₂</span>
             </div>
           </div>

@@ -4,9 +4,11 @@ import { SeniorStatus } from '../types';
 
 interface VitalsViewProps {
   status: SeniorStatus;
+  onRefresh?: () => void;
+  isFitConnected?: boolean;
 }
 
-export const VitalsView: React.FC<VitalsViewProps> = ({ status }) => {
+export const VitalsView: React.FC<VitalsViewProps> = ({ status, onRefresh, isFitConnected = false }) => {
   return (
     <div className="pb-24 pt-6 px-4 space-y-4 animate-fade-in bg-gray-50 min-h-full">
       
@@ -24,9 +26,9 @@ export const VitalsView: React.FC<VitalsViewProps> = ({ status }) => {
             <div className="bg-green-100 rounded-full p-1">
                 <CheckCircle size={16} className="text-green-500" />
             </div>
-            <span className="text-sm text-gray-600 font-medium">Synced with Google Fit • Just now</span>
+            <span className="text-sm text-gray-600 font-medium">{isFitConnected ? 'Synced with Google Fit • Just now' : 'Not loaded or connected'}</span>
          </div>
-         <button className="text-blue-600 text-sm font-bold hover:underline">Sync</button>
+         <button onClick={onRefresh} className={`text-blue-600 text-sm font-bold hover:underline ${!isFitConnected ? 'opacity-70' : ''}`}>Sync</button>
       </div>
 
       {/* Heart Rate Card */}
@@ -45,7 +47,7 @@ export const VitalsView: React.FC<VitalsViewProps> = ({ status }) => {
           </div>
 
           <div className="flex items-end gap-2 mb-6">
-              <span className="text-5xl font-black text-gray-900">{status.heartRate}</span>
+              <span className="text-5xl font-black text-gray-900">{isFitConnected ? (status.heartRate || '--') : 'Not loaded or connected'}</span>
               <span className="text-gray-500 font-bold mb-1">BPM</span>
           </div>
 
@@ -140,9 +142,9 @@ export const VitalsView: React.FC<VitalsViewProps> = ({ status }) => {
           </div>
 
           <div className="flex items-end gap-2 mb-4">
-              <span className="text-5xl font-black text-gray-900">{Math.floor(status.sleepHours)}</span>
+              <span className="text-5xl font-black text-gray-900">{isFitConnected ? Math.floor(status.sleepHours) : 'Not loaded or connected'}</span>
               <span className="text-gray-500 font-bold mb-1">hr</span>
-              <span className="text-5xl font-black text-gray-900">{Math.round((status.sleepHours % 1) * 60)}</span>
+              <span className="text-5xl font-black text-gray-900">{isFitConnected ? Math.round((status.sleepHours % 1) * 60) : ''}</span>
               <span className="text-gray-500 font-bold mb-1">min</span>
           </div>
 
@@ -196,7 +198,7 @@ export const VitalsView: React.FC<VitalsViewProps> = ({ status }) => {
           </div>
 
           <div className="flex items-end gap-2 mb-2">
-              <span className="text-5xl font-black text-gray-900">{status.steps.toLocaleString()}</span>
+              <span className="text-5xl font-black text-gray-900">{isFitConnected ? status.steps.toLocaleString() : 'Not loaded or connected'}</span>
               <span className="text-gray-500 font-bold mb-1">steps</span>
           </div>
 

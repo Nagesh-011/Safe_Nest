@@ -23,9 +23,12 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
   const isEmergency = status.status !== 'Normal';
   const primaryCaregiver = caregivers.find(c => c.role === UserRole.CAREGIVER);
 
-  // Format the last update time
-  const timeAgo = (date: Date) => {
-    const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
+  // Format the last update time (accept Date or ISO string)
+  const timeAgo = (dateLike: Date | string | undefined) => {
+    if (!dateLike) return 'N/A';
+    const date = dateLike instanceof Date ? dateLike : new Date(dateLike);
+    if (isNaN(date.getTime())) return 'N/A';
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
     if (seconds < 60) return 'Just now';
     const minutes = Math.floor(seconds / 60);
     return `${minutes}m ago`;
@@ -40,6 +43,11 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
 
   // Initialize Leaflet Map
   useEffect(() => {
+    // Require valid location and Leaflet
+    if (!status?.location || typeof status.location.lat !== 'number' || typeof status.location.lng !== 'number') {
+      console.warn('[LocationView] No valid location found on status, skipping map init');
+      return;
+    }
     if (!mapContainerRef.current || typeof L === 'undefined') return;
     
     // Clear container and previous instance
@@ -139,9 +147,8 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
         // Create Custom Avatar Icon
         const createIcon = (isAlert: boolean) => {
           const defaultAvatar = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNFNUU3RUIiLz48Y2lyY2xlIGN4PSI1MCIgY3k9IjM1IiByPSIxNSIgZmlsbD0iIzlDQTNCNCIvPjxwYXRoIGQ9Ik0yMCA4NUMyMCA2NS4xMTggMzMuNDMxNSA1MCA1MCA1MEM2Ni41Njg1IDUwIDgwIDY1LjExOCA4MCA4NVYxMDBIMjBWODVaIiBmaWxsPSIjOUNBM0I0Ii8+PC9zdmc+';
-          const avatarUrl = seniorProfile?.avatar && isValidImageUrl(seniorProfile.avatar) 
-            ? sanitizeForHTML(seniorProfile.avatar) 
-            : defaultAvatar;
+          // Only use validated image URLs directly (do not escape slashes) so image loads correctly
+          const avatarUrl = seniorProfile && isValidImageUrl(seniorProfile.avatar) ? seniorProfile.avatar : defaultAvatar;
           
           return L.divIcon({
             className: 'custom-pin',

@@ -36,6 +36,7 @@ import {
   cleanupEmergencyShortcuts 
 } from './services/emergencyShortcuts';
 import { sanitizeForLog } from './utils/sanitize';
+import * as googleFitService from './services/googleFit';
 
 const normalizePhone = (value: string) => value ? value.replace(/\D/g, '') : '';
 
@@ -136,6 +137,7 @@ const App = () => {
 
   const [activeTab, setActiveTab] = useState('home');
   const [seniorStatus, setSeniorStatus] = useState<SeniorStatus>(INITIAL_SENIOR_STATUS);
+  const [isFitConnected, setIsFitConnected] = useState<boolean>(false);
   
   // Listen for navigation to companion event
   useEffect(() => {
@@ -145,12 +147,8 @@ const App = () => {
     window.addEventListener('navigateToCompanion', handleNavigateToCompanion);
     return () => window.removeEventListener('navigateToCompanion', handleNavigateToCompanion);
   }, []);
-  
-  // Keep seniorStatus ref in sync
-  useEffect(() => {
-    seniorStatusRef.current = seniorStatus;
-  }, [seniorStatus]);
-  
+
+  // Household identifiers (moved early so effects can depend on them)
   const [householdId, setHouseholdId] = useState<string>(() => {
     return localStorage.getItem('safenest_household_id') || '';
   });
@@ -161,6 +159,41 @@ const App = () => {
   const [activeHouseholdId, setActiveHouseholdId] = useState<string>(() => {
     return localStorage.getItem('safenest_active_household') || '';
   });
+
+
+  // Poll Google Fit for vitals when senior is active and connected
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const hasPerm = await googleFitService.hasPermissions();
+        setIsFitConnected(hasPerm);
+        if (!hasPerm) return;
+        const vitals = await googleFitService.getVitals();
+        if (vitals && !cancelled) {
+          setSeniorStatus(prev => ({ ...prev, steps: vitals.steps, heartRate: vitals.heartRate || prev.heartRate, lastUpdate: new Date(), }));
+        }
+      } catch (e) {
+        console.warn('Google Fit poll failed', e);
+        setIsFitConnected(false);
+      }
+    };
+
+    const interval = setInterval(poll, 30_000);
+    // Do an initial poll
+    poll();
+
+    // Listen for immediate updates from ProfileView/connect flow
+    const handleConnected = () => setIsFitConnected(true);
+    window.addEventListener('googleFitConnected', handleConnected);
+
+    return () => { cancelled = true; clearInterval(interval); window.removeEventListener('googleFitConnected', handleConnected); };
+  }, [role, householdId]);
+  
+  // Keep seniorStatus ref in sync
+  useEffect(() => {
+    seniorStatusRef.current = seniorStatus;
+  }, [seniorStatus]);
   
   // Voice/Reminder State
   const [isListening, setIsListening] = useState(false);
@@ -170,6 +203,9 @@ const App = () => {
   // Medicine State
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [medicineLogs, setMedicineLogs] = useState<MedicineLog[]>([]);
+  const [allMedicineLogs, setAllMedicineLogs] = useState<{ [householdId: string]: MedicineLog[] }>({});
+  const [allMedicines, setAllMedicines] = useState<{ [householdId: string]: Medicine[] }>({});
+  const initializedLogsRef = useRef<{ [householdId: string]: boolean }>({});
   
   // Household Members and Contacts
   const [householdMembers, setHouseholdMembers] = useState<HouseholdMember[]>([]);
@@ -545,6 +581,14 @@ const App = () => {
           };
           return newState;
       });
+  };
+
+  // Helper to normalize time strings to HH:MM (zero padded)
+  const normalizeTimeString = (time: string) => {
+    if (!time) return time;
+    const parts = time.split(':').map(s => parseInt(s, 10));
+    if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return time.trim();
+    return `${parts[0].toString().padStart(2,'0')}:${parts[1].toString().padStart(2,'0')}`;
   };
 
   // --- SYSTEM LEVEL REMINDER TRIGGER ---
@@ -1568,6 +1612,52 @@ const App = () => {
         }
       });
       unsubscribers.push(() => statusUnsub());
+
+      // Listen to medicine logs across households for caregivers
+      const logsRef = ref(db, `households/${hId}/medicineLogs`);
+      const logsUnsub = onValue(logsRef, (snapshot) => {
+        const data = snapshot.val();
+        const logsList = data ? Object.values(data).map((log: any) => ({ ...log, date: new Date(log.date) })) as MedicineLog[] : [];
+        // compute prev length safely from current state
+        const prevLen = (allMedicineLogs[hId] || []).length;
+        setAllMedicineLogs(prev => ({ ...prev, [hId]: logsList }));
+        console.log(`[App] onValue medicineLogs for household ${hId}, count=`, logsList.length, 'prev=', prevLen);
+
+        // Notify caregiver about new logs in non-active households (avoid initial load notifications)
+        if (role === UserRole.CAREGIVER && hId !== activeHouseholdId) {
+          const initialized = initializedLogsRef.current[hId];
+          if (initialized && logsList.length > prevLen) {
+            const latest = logsList[logsList.length - 1];
+            console.log(`[App] Notifying caregiver about new medication log for household ${hId}:`, latest);
+            LocalNotifications.schedule({
+              notifications: [{
+                title: `${(allHouseholdSeniors[hId] && allHouseholdSeniors[hId].name) || 'Senior'} medication`,
+                body: `${latest.medicineName} ${latest.status.toLowerCase()} at ${latest.actualTime || latest.scheduledTime}`,
+                id: Date.now(),
+                schedule: { at: new Date(Date.now() + 100) },
+              }]
+            }).catch(console.error);
+          }
+          initializedLogsRef.current[hId] = true;
+        }
+      });
+      unsubscribers.push(() => logsUnsub());
+
+      // Listen to medicines across households for caregivers
+      const medsRef = ref(db, `households/${hId}/medicines`);
+      const medsUnsub = onValue(medsRef, (snapshot) => {
+        const data = snapshot.val();
+        const medsList = data ? Object.values(data).map((med: any) => ({
+          ...med,
+          startDate: new Date(med.startDate),
+          endDate: med.endDate ? new Date(med.endDate) : undefined,
+          createdAt: new Date(med.createdAt),
+          updatedAt: new Date(med.updatedAt),
+        })) as Medicine[] : [];
+        setAllMedicines(prev => ({ ...prev, [hId]: medsList }));
+        console.log(`[App] onValue medicines for household ${hId}, count=`, medsList.length);
+      });
+      unsubscribers.push(() => medsUnsub());
     });
     
     return () => {
@@ -1678,21 +1768,28 @@ const App = () => {
     }
 
     const logId = `${medicineId}_${Date.now()}`;
-    const log: MedicineLog = {
+    const normalizedScheduled = normalizeTimeString(scheduledTime);
+    const now = new Date();
+    const isoDate = now.toISOString();
+
+    // Prepare DB payload (date as ISO string) and local state payload (date as Date instance)
+    const logForDB = {
       id: logId,
       medicineId,
       medicineName: medicine.name,
       dosage: medicine.dosage,
-      scheduledTime,
-      actualTime: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      scheduledTime: normalizedScheduled,
+      actualTime: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
       status: 'TAKEN',
-      date: new Date(),
+      date: isoDate,
     };
-    console.log('[handleMarkTaken] Writing log:', log);
-    set(ref(db, `households/${householdId}/medicineLogs/${logId}`), log)
+
+    console.log('[handleMarkTaken] Writing log:', logForDB);
+    set(ref(db, `households/${householdId}/medicineLogs/${logId}`), logForDB)
       .then(() => {
         console.log('[handleMarkTaken] Write success:', logId);
-        setMedicineLogs(prev => [...prev, log]);
+        // Push a Date instance into local state for consistent behavior
+        setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
       })
       .catch((err) => {
         console.error('[handleMarkTaken] Write failed:', err);
@@ -1711,20 +1808,24 @@ const App = () => {
     }
 
     const logId = `${medicineId}_${Date.now()}`;
-    const log: MedicineLog = {
+    const normalizedScheduled = normalizeTimeString(scheduledTime);
+    const now = new Date();
+    const isoDate = now.toISOString();
+
+    const logForDB = {
       id: logId,
       medicineId,
       medicineName: medicine.name,
       dosage: medicine.dosage,
-      scheduledTime,
+      scheduledTime: normalizedScheduled,
       status: 'SKIPPED',
-      date: new Date(),
+      date: isoDate,
     };
-    console.log('[handleSkipMedicine] Writing log:', log);
-    set(ref(db, `households/${householdId}/medicineLogs/${logId}`), log)
+    console.log('[handleSkipMedicine] Writing log:', logForDB);
+    set(ref(db, `households/${householdId}/medicineLogs/${logId}`), logForDB)
       .then(() => {
         console.log('[handleSkipMedicine] Write success:', logId);
-        setMedicineLogs(prev => [...prev, log]);
+        setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
       })
       .catch((err) => {
         console.error('[handleSkipMedicine] Write failed:', err);
@@ -1941,11 +2042,16 @@ const App = () => {
 
     if (role === UserRole.CAREGIVER) {
       const senior = householdMembers.find(m => m.role === UserRole.SENIOR);
+      const caregiverSelectedHouseholdId = activeHouseholdId || householdId;
+      const caregiverLogs = role === UserRole.CAREGIVER ? (allMedicineLogs[caregiverSelectedHouseholdId] || []) : medicineLogs;
+      const caregiverMeds = role === UserRole.CAREGIVER ? (allMedicines[caregiverSelectedHouseholdId] || medicines) : medicines;
+      console.log('[App] Caregiver render: selectedHousehold=', caregiverSelectedHouseholdId, 'caregiverMeds=', caregiverMeds.length, 'caregiverLogs=', caregiverLogs.length);
       
       return (
         <CaregiverDashboard 
             onBack={() => setRole(null)} 
             seniorStatus={seniorStatus}
+            isFitConnected={isFitConnected}
             reminders={reminders}
             onAddReminder={handleAddReminder}
             stopAlert={stopCaregiverAlert}
@@ -1956,8 +2062,8 @@ const App = () => {
             householdIds={householdIds}
             onSwitchHousehold={handleSwitchHousehold}
             seniors={allHouseholdSeniors}
-            medicines={medicines}
-            medicineLogs={medicineLogs}
+            medicines={caregiverMeds}
+            medicineLogs={caregiverLogs}
             onAddMedicine={handleAddMedicine}
             onUpdateMedicine={handleUpdateMedicine}
             onDeleteMedicine={handleDeleteMedicine}
@@ -1991,7 +2097,25 @@ const App = () => {
             />
         );
       case 'vitals':
-        return <VitalsView status={seniorStatus} />;
+        return <VitalsView status={seniorStatus} isFitConnected={isFitConnected} onRefresh={async () => {
+          try {
+            const ok = await googleFitService.hasPermissions();
+            setIsFitConnected(ok);
+            if (!ok) {
+              alert('Google Fit is not connected or permissions are missing');
+              return;
+            }
+
+            const vitals = await googleFitService.getVitals();
+            if (vitals) {
+              setSeniorStatus(prev => ({ ...prev, steps: vitals.steps, heartRate: vitals.heartRate || prev.heartRate, lastUpdate: new Date() }));
+            } else {
+              console.warn('No vitals from Google Fit');
+            }
+          } catch (e) {
+            console.error('Sync failed', e);
+          }
+        }} />;
       case 'carers':
         return <ContactsView caregivers={householdMembers.filter(m => m.role === UserRole.CAREGIVER)} contacts={contacts} onAddContact={handleAddContact} />;
       case 'settings':
@@ -2001,6 +2125,7 @@ const App = () => {
         return (
             <SeniorHome 
               status={seniorStatus} 
+              isFitConnected={isFitConnected}
               userProfile={currentUser}
               onSignOut={handleSignOut}
               householdId={householdId}

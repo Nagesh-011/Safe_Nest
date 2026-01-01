@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Camera, Save, User, Phone } from 'lucide-react';
 import { UserProfile } from '../types';
+import * as googleFitService from '../services/googleFit';
 
 interface ProfileViewProps {
     user: UserProfile;
@@ -14,7 +15,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ user, onBack, onSave, 
   const [phone, setPhone] = useState(user.phone);
   const [avatar, setAvatar] = useState(user.avatar);
   const [isSaving, setIsSaving] = useState(false);
-    const displayHouseholdId = (householdId || localStorage.getItem('safenest_household_id') || '').toString().trim();
+  const [isFitConnected, setIsFitConnected] = useState<boolean | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const displayHouseholdId = (householdId || localStorage.getItem('safenest_household_id') || '').toString().trim();
+
+  // Check Google Fit status on mount
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const ok = await googleFitService.hasPermissions();
+        if (mounted) setIsFitConnected(ok);
+      } catch (e) {
+        if (mounted) setIsFitConnected(false);
+      }
+    })();
+    return () => { mounted = false };
+  }, []);
 
   const handleSave = () => {
     setIsSaving(true);
@@ -105,6 +122,55 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ user, onBack, onSave, 
                                     <p className="text-xs text-blue-600 leading-relaxed mt-1">
                                         Share this code with caregivers to link devices.
                                     </p>
+                                </div>
+                                {/* Google Fit Connect */}
+                                <div className="pt-4 border-t border-blue-100">
+                                    <h3 className="font-bold text-blue-800 text-sm mb-1">Connect Smartwatch</h3>
+                                    <p className="text-sm text-blue-900 tracking-wide">Connect your Wear OS watch via Google Fit to sync steps, heart rate, calories and distance.</p>
+
+                                    <div className="mt-3 flex items-center gap-3">
+                                        <button id="connectFitBtn" onClick={async () => {
+                                            try {
+                                                setIsConnecting(true);
+                                                // Start permission flow
+                                                const started = await googleFitService.requestPermissions();
+                                                if (started) {
+                                                    // Ask user to complete sign-in in Google dialog and then check status
+                                                    // Delay briefly to let user complete the dialog
+                                                    await new Promise(r => setTimeout(r, 1000));
+                                                    const ok = await googleFitService.hasPermissions();
+                                                    if (ok) {
+                                                        setIsFitConnected(true);
+                                                        alert('Google Fit permissions granted — syncing enabled');
+                                                        await googleFitService.ensureSubscriptions();
+                                                        // Notify global app state so UI updates immediately
+                                                        window.dispatchEvent(new Event('googleFitConnected'));
+                                                    } else {
+                                                        setIsFitConnected(false);
+                                                        alert('Please complete Google Sign-In to grant Fit access');
+                                                    }
+                                                } else {
+                                                    alert('Could not start Google Fit sign-in flow on this device');
+                                                }
+                                            } catch (e) {
+                                                console.error('Google Fit connect error', e);
+                                                alert('Error initiating Google Fit connection');
+                                                setIsFitConnected(false);
+                                            } finally {
+                                                setIsConnecting(false);
+                                            }
+                                        }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-bold">
+                                            {isConnecting ? 'Connecting...' : 'Connect via Google Fit'}
+                                        </button>
+
+                                        <button onClick={async () => {
+                                            const ok = await googleFitService.hasPermissions();
+                                            setIsFitConnected(ok);
+                                            if (ok) alert('Google Fit connected'); else alert('Not connected');
+                                        }} className="bg-gray-100 px-3 py-2 rounded-xl text-sm">Check Status</button>
+                                    </div>
+
+                                    <p className="text-xs text-blue-600 leading-relaxed mt-3">If your watch is paired and Google Fit installed on your phone, granting access here will enable automatic sync.</p>
                                 </div>
                                 <p className="text-xs text-blue-600 leading-relaxed">
                                         This info is visible to your caregivers during an alert.

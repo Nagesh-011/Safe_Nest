@@ -10,6 +10,7 @@ declare var L: any;
 interface CaregiverDashboardProps {
   onBack: () => void;
   seniorStatus: SeniorStatus;
+  isFitConnected?: boolean;
   stopAlert?: () => void;
   reminders: Reminder[];
   onAddReminder: (reminder: Reminder) => void;
@@ -30,6 +31,7 @@ interface CaregiverDashboardProps {
 export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ 
     onBack, 
     seniorStatus, 
+    isFitConnected = false,
     stopAlert,
     reminders,
     onAddReminder,
@@ -63,6 +65,11 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
+  const caregiverMarkerRef = useRef<any>(null);
+  const routeLayerRef = useRef<any>(null);
+
+  const [caregiverLocation, setCaregiverLocation] = useState<{lat:number,lng:number}|null>(null);
+  const caregiverWatchIdRef = useRef<number | null>(null);
 
   const isEmergency = seniorStatus.status !== 'Normal';
 
@@ -70,6 +77,22 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
     if (stopAlert) stopAlert();
     if (!senior) return;
     window.open(`tel:${senior.phone.replace(/\D/g,'')}`, '_self');
+  };
+
+  // Open Google Maps directions (origin = caregiver location if available)
+  const openInMaps = () => {
+    if (!seniorStatus?.location) return;
+    const destLat = seniorStatus.location.lat;
+    const destLng = seniorStatus.location.lng;
+    const destination = `${destLat},${destLng}`;
+    const base = 'https://www.google.com/maps/dir/?api=1';
+    let url = `${base}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    if (caregiverLocation) {
+      const origin = `${caregiverLocation.lat},${caregiverLocation.lng}`;
+      url += `&origin=${encodeURIComponent(origin)}`;
+    }
+    // Open in new tab/window - on mobile this should open the Google Maps app
+    window.open(url, '_blank');
   };
 
   const submitReminder = (e: React.FormEvent) => {
@@ -114,6 +137,12 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
         if (!mapContainerRef.current) return;
         
         try {
+            // Validate senior location
+            if (!seniorStatus?.location || typeof seniorStatus.location.lat !== 'number' || typeof seniorStatus.location.lng !== 'number') {
+              console.warn('[MAP] No valid senior location, skipping map init');
+              return;
+            }
+
             console.log('[MAP] Initializing map...', {
                 lat: seniorStatus.location.lat,
                 lng: seniorStatus.location.lng,
@@ -140,11 +169,19 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
             // Store layers
             (map as any).layers = { street: streetLayer, satellite: satelliteLayer };
             
-            // Add marker
-            const marker = L.marker([seniorStatus.location.lat, seniorStatus.location.lng]).addTo(map);
-            
-            mapInstanceRef.current = map;
+            // Add senior marker
+            const marker = L.marker([seniorStatus.location.lat, seniorStatus.location.lng], {title: 'Senior Location'}).addTo(map);
             markerRef.current = marker;
+
+            // If we have caregiver location already, add caregiver marker
+            if (caregiverLocation) {
+              caregiverMarkerRef.current = L.marker([caregiverLocation.lat, caregiverLocation.lng], {title: 'You'}).addTo(map);
+            }
+
+            // Add empty route layer (GeoJSON) to draw route later
+            routeLayerRef.current = L.geoJSON(null, { style: { color: '#2563eb', weight: 4, opacity: 0.9 } }).addTo(map);
+
+            mapInstanceRef.current = map;
             
             // Trigger resize
             setTimeout(() => {
@@ -190,6 +227,26 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
     }
   }, [mapType]);
 
+  // Watch caregiver location (browser geolocation) while map tab active
+  useEffect(() => {
+    if (activeTab !== 'map' || typeof navigator === 'undefined' || !('geolocation' in navigator)) return;
+
+    // Start watching caregiver position
+    const watchId = navigator.geolocation.watchPosition((pos) => {
+      const { latitude, longitude } = pos.coords;
+      setCaregiverLocation({ lat: latitude, lng: longitude });
+    }, (err) => {
+      console.warn('[MAP] Caregiver geolocation error:', err.message);
+    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
+
+    caregiverWatchIdRef.current = watchId;
+
+    return () => {
+      if (caregiverWatchIdRef.current !== null) navigator.geolocation.clearWatch(caregiverWatchIdRef.current as number);
+      caregiverWatchIdRef.current = null;
+    };
+  }, [activeTab]);
+
   const displayHouseholdIds = (householdIds && householdIds.length > 0)
     ? householdIds
     : (householdId ? [householdId] : []);
@@ -197,6 +254,56 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
   // Get all available seniors
   const allSeniors = Object.values(seniors || {});
   
+  // Update markers and route whenever caregiver or senior locations change
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    // Update senior marker
+    if (markerRef.current) {
+      markerRef.current.setLatLng([seniorStatus.location.lat, seniorStatus.location.lng]);
+    } else {
+      markerRef.current = L.marker([seniorStatus.location.lat, seniorStatus.location.lng], { title: 'Senior' }).addTo(map);
+    }
+
+    // Update caregiver marker
+    if (caregiverLocation) {
+      if (caregiverMarkerRef.current) {
+        if (typeof caregiverMarkerRef.current.setLatLng === 'function') caregiverMarkerRef.current.setLatLng([caregiverLocation.lat, caregiverLocation.lng]);
+        else caregiverMarkerRef.current = L.circleMarker([caregiverLocation.lat, caregiverLocation.lng], { radius:6, color:'#f97316', fillColor:'#fb923c', weight:2 }).addTo(map);
+      } else {
+        caregiverMarkerRef.current = L.circleMarker([caregiverLocation.lat, caregiverLocation.lng], { radius:6, color:'#f97316', fillColor:'#fb923c', weight:2 }).addTo(map);
+      }
+    }
+
+    // If both locations available, fetch route from OSRM and draw it
+    if (caregiverLocation && seniorStatus.location) {
+      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${caregiverLocation.lng},${caregiverLocation.lat};${seniorStatus.location.lng},${seniorStatus.location.lat}?overview=full&geometries=geojson`;
+      fetch(osrmUrl)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.routes && data.routes[0] && data.routes[0].geometry) {
+            const geo = data.routes[0].geometry;
+            if (routeLayerRef.current) {
+              routeLayerRef.current.clearLayers();
+              routeLayerRef.current.addData(geo);
+            } else {
+              routeLayerRef.current = L.geoJSON(geo, { style: { color: '#2563eb', weight: 4, opacity: 0.9 } }).addTo(map);
+            }
+            // Fit bounds to show both points and route
+            try {
+              const bounds = L.geoJSON(geo).getBounds();
+              map.fitBounds(bounds.pad ? bounds.pad(0.2) : bounds, { maxZoom: 16 });
+            } catch (e) {
+              console.warn('[MAP] Could not fit bounds to route:', e);
+            }
+          }
+        })
+        .catch(err => console.warn('[MAP] Route fetch failed:', err));
+    }
+
+  }, [caregiverLocation, seniorStatus.location]);
+
   // Show senior selection screen if multiple seniors and none selected
   if (allSeniors.length > 1 && !selectedSeniorId) {
     return (
@@ -557,7 +664,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
             <div ref={mapContainerRef} className="absolute inset-0 w-full h-full outline-none z-0" />
             
             {/* Map Type Toggle Buttons */}
-            <div className="absolute top-4 right-4 z-20 flex gap-2">
+            <div className="absolute top-4 right-4 z-20 flex gap-2 items-center">
               <button 
                 onClick={() => setMapType('street')}
                 className={`p-2 rounded-full shadow-md transition-colors ${mapType === 'street' ? 'bg-blue-500 text-white' : 'bg-white/90 backdrop-blur-sm text-gray-700 hover:bg-white'}`}
@@ -573,6 +680,39 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
               >
                 <Layers size={20} />
               </button>
+
+              {/* Center controls */}
+              <button
+                onClick={() => {
+                  if (mapInstanceRef.current && seniorStatus?.location) {
+                    mapInstanceRef.current.setView([seniorStatus.location.lat, seniorStatus.location.lng], 16);
+                  }
+                }}
+                className="p-2 rounded-full shadow-md transition-colors bg-white/90 backdrop-blur-sm hover:bg-white text-gray-700"
+                title="Center on senior"
+              >
+                <MapPin size={18} />
+              </button>
+
+              <button
+                onClick={() => {
+                  if (mapInstanceRef.current && caregiverLocation) {
+                    mapInstanceRef.current.setView([caregiverLocation.lat, caregiverLocation.lng], 16);
+                  }
+                }}
+                className="p-2 rounded-full shadow-md transition-colors bg-white/90 backdrop-blur-sm hover:bg-white text-gray-700"
+                title="Center on me"
+              >
+                <Navigation size={18} />
+              </button>
+
+              <button
+                onClick={openInMaps}
+                className="p-2 rounded-full shadow-md transition-colors bg-white/90 backdrop-blur-sm hover:bg-white text-gray-700"
+                title="Open in Google Maps"
+              >
+                <Navigation size={18} />
+              </button>
             </div>
             <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.1)] p-6 z-10">
                 <div className="flex justify-between items-center gap-6">
@@ -585,7 +725,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                     </div>
                     <div className="flex flex-col items-end justify-center gap-2 flex-shrink-0">
                         <div className="flex items-center gap-1.5 text-gray-600 text-sm font-medium whitespace-nowrap"><Battery size={16} /> {seniorStatus.batteryLevel}%</div>
-                        <div className="flex items-center gap-1.5 text-gray-600 text-sm font-medium whitespace-nowrap"><Heart size={16} /> {seniorStatus.heartRate} bpm</div>
+                        <div className="flex items-center gap-1.5 text-gray-600 text-sm font-medium whitespace-nowrap"><Heart size={16} /> {isFitConnected ? (seniorStatus.heartRate ? seniorStatus.heartRate + ' bpm' : '--') : 'Not loaded or connected'}</div>
                     </div>
                 </div>
             </div>

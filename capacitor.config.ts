@@ -17,4 +17,5 @@ const config: CapacitorConfig = {
     : {})
 };
 
+// Export the canonical Capacitor config so `npx cap copy` can create capacitor.config.json
 export default config;
