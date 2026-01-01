@@ -36,7 +36,9 @@ jobs:
           api-level: 33
           arch: x86_64
           target: google_apis
-          build-tools: 33.0.2
+          # The action requires a `script` input that runs SDK manager commands
+          script: |
+            sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
 
       - name: Accept licenses
         run: |
