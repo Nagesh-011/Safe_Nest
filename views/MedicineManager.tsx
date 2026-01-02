@@ -2,6 +2,47 @@ import React, { useState } from 'react';
 import { Plus, Edit2, Trash2, Calendar, Clock, Pill, AlertCircle, CheckCircle, X } from 'lucide-react';
 import { Medicine, MedicineLog } from '../types';
 
+// Convert time string to minutes since midnight for comparison
+const timeToMinutes = (time: string): number => {
+  const [hours, minutes] = time.split(':').map(Number);
+  return hours * 60 + minutes;
+};
+
+// Check if two times are within a minimum gap (in minutes)
+const areTimesTooClose = (time1: string, time2: string, minGapMinutes: number = 15): boolean => {
+  const mins1 = timeToMinutes(time1);
+  const mins2 = timeToMinutes(time2);
+  return Math.abs(mins1 - mins2) < minGapMinutes;
+};
+
+// Check for time conflicts with existing medicines
+const findTimeConflicts = (
+  newTimes: string[],
+  existingMedicines: Medicine[],
+  editingId: string | null,
+  minGapMinutes: number = 15
+): { time: string; conflictWith: string }[] => {
+  const conflicts: { time: string; conflictWith: string }[] = [];
+  
+  newTimes.forEach((newTime) => {
+    existingMedicines.forEach((med) => {
+      // Skip the medicine being edited
+      if (med.id === editingId) return;
+      
+      med.times.forEach((existingTime) => {
+        if (areTimesTooClose(newTime, existingTime, minGapMinutes)) {
+          conflicts.push({
+            time: newTime,
+            conflictWith: `${med.name} at ${existingTime}`,
+          });
+        }
+      });
+    });
+  });
+  
+  return conflicts;
+};
+
 interface MedicineManagerProps {
   medicines: Medicine[];
   onAddMedicine: (medicine: Medicine) => void;
@@ -65,11 +106,39 @@ export const MedicineManager: React.FC<MedicineManagerProps> = ({
       return;
     }
 
+    // Validate: check for duplicate times within this medicine
+    const uniqueTimes = new Set(formData.times || []);
+    if (uniqueTimes.size !== (formData.times || []).length) {
+      alert('Duplicate times detected. Please use unique times for each dose.');
+      return;
+    }
+
+    // Validate: check for time conflicts with other medicines
+    const conflicts = findTimeConflicts(
+      formData.times || [],
+      medicines,
+      editingId,
+      15 // 15 minute minimum gap
+    );
+    
+    if (conflicts.length > 0) {
+      const conflictMsg = conflicts
+        .map((c) => `${c.time} conflicts with ${c.conflictWith}`)
+        .join('\n');
+      const proceed = confirm(
+        `Time conflicts detected:\n${conflictMsg}\n\nThis may cause confusion. Continue anyway?`
+      );
+      if (!proceed) return;
+    }
+
+    // Sync frequency with actual number of times
+    const actualFrequency = (formData.times || ['08:00']).length;
+
     const medicine: Medicine = {
       id: editingId || Date.now().toString(),
       name: formData.name,
       dosage: formData.dosage || '1 tablet',
-      frequency: formData.frequency || 1,
+      frequency: actualFrequency, // Auto-sync with times array
       times: formData.times || ['08:00'],
       timeLabels: formData.timeLabels,
       startDate: formData.startDate || new Date(),

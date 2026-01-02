@@ -594,6 +594,31 @@ const App = () => {
     return `${parts[0].toString().padStart(2,'0')}:${parts[1].toString().padStart(2,'0')}`;
   };
 
+  // Timezone-safe: get local midnight timestamp for a date
+  const getLocalMidnight = (date: Date): number => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+
+  // Check if two dates are the same local day
+  const isSameLocalDay = (date1: Date, date2: Date): boolean => {
+    return getLocalMidnight(date1) === getLocalMidnight(date2);
+  };
+
+  // Check if a log already exists for this medicine + date + time (deduplication)
+  const findExistingLog = (medicineId: string, scheduledTime: string, targetDate: Date): MedicineLog | undefined => {
+    const normalized = normalizeTimeString(scheduledTime);
+    return medicineLogs.find((log) => {
+      const logDate = log.date instanceof Date ? log.date : new Date(log.date);
+      return (
+        log.medicineId === medicineId &&
+        isSameLocalDay(logDate, targetDate) &&
+        normalizeTimeString(log.scheduledTime) === normalized
+      );
+    });
+  };
+
   // --- SYSTEM LEVEL REMINDER TRIGGER ---
   useEffect(() => {
     if (role !== UserRole.SENIOR) return;
@@ -641,6 +666,76 @@ const App = () => {
     const interval = setInterval(checkReminders, 10000); 
     return () => clearInterval(interval);
   }, [reminders, activeReminderId, role]);
+
+  // --- AUTO-MISSED MEDICINE SCHEDULER ---
+  // Automatically mark overdue medicines as MISSED after grace period (runs every minute)
+  useEffect(() => {
+    if (role !== UserRole.SENIOR || !householdId) return;
+
+    const checkOverdueMedicines = () => {
+      const now = new Date();
+      const graceMinutes = 60; // 1 hour grace period before auto-marking as MISSED
+
+      medicines.forEach((medicine) => {
+        // Check if medicine is active today
+        const medicineStart = new Date(medicine.startDate);
+        medicineStart.setHours(0, 0, 0, 0);
+        const medicineEnd = medicine.endDate ? new Date(medicine.endDate) : null;
+        if (medicineEnd) medicineEnd.setHours(23, 59, 59, 999);
+
+        const todayMidnight = new Date();
+        todayMidnight.setHours(0, 0, 0, 0);
+
+        if (medicineStart > now || (medicineEnd && medicineEnd < todayMidnight)) return;
+
+        medicine.times.forEach((scheduledTime) => {
+          const [hours, minutes] = scheduledTime.split(':').map(Number);
+          const scheduledDate = new Date();
+          scheduledDate.setHours(hours, minutes, 0, 0);
+
+          // Add grace period
+          const overdueThreshold = new Date(scheduledDate.getTime() + graceMinutes * 60 * 1000);
+
+          // If current time is past the grace period
+          if (now > overdueThreshold) {
+            // Check if log already exists for this dose today
+            const existingLog = findExistingLog(medicine.id, scheduledTime, now);
+            
+            // If no log exists, create a MISSED log
+            if (!existingLog) {
+              console.log(`[AutoMissed] Marking ${medicine.name} at ${scheduledTime} as MISSED`);
+              
+              const logId = `${medicine.id}_auto_${Date.now()}`;
+              const logForDB = {
+                id: logId,
+                medicineId: medicine.id,
+                medicineName: medicine.name,
+                dosage: medicine.dosage,
+                scheduledTime: normalizeTimeString(scheduledTime),
+                status: 'MISSED',
+                date: now.toISOString(),
+                autoMarked: true, // Flag to indicate auto-marked
+              };
+
+              set(ref(db, `households/${householdId}/medicineLogs/${logId}`), logForDB)
+                .then(() => {
+                  console.log('[AutoMissed] Created MISSED log:', logId);
+                  setMedicineLogs(prev => [...prev, { ...logForDB, date: now } as MedicineLog]);
+                })
+                .catch((err) => console.error('[AutoMissed] Failed:', err));
+            }
+          }
+        });
+      });
+    };
+
+    // Run every minute
+    const interval = setInterval(checkOverdueMedicines, 60 * 1000);
+    // Also run once on mount
+    checkOverdueMedicines();
+
+    return () => clearInterval(interval);
+  }, [role, householdId, medicines, medicineLogs]);
 
 
   // Caregiver Function: Add new Reminder
@@ -1791,9 +1886,30 @@ const App = () => {
       return;
     }
 
-    const logId = `${medicineId}_${Date.now()}`;
-    const normalizedScheduled = normalizeTimeString(scheduledTime);
     const now = new Date();
+    const normalizedScheduled = normalizeTimeString(scheduledTime);
+    
+    // Check for duplicate log (deduplication)
+    const existingLog = findExistingLog(medicineId, scheduledTime, now);
+    if (existingLog) {
+      console.log('[handleMarkTaken] Log already exists, updating instead of creating:', existingLog.id);
+      // Update existing log instead of creating duplicate
+      const updatedLog = {
+        ...existingLog,
+        status: 'TAKEN',
+        actualTime: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        date: now.toISOString(),
+      };
+      set(ref(db, `households/${householdId}/medicineLogs/${existingLog.id}`), updatedLog)
+        .then(() => {
+          console.log('[handleMarkTaken] Update success:', existingLog.id);
+          setMedicineLogs(prev => prev.map(l => l.id === existingLog.id ? { ...updatedLog, date: now } as MedicineLog : l));
+        })
+        .catch((err) => console.error('[handleMarkTaken] Update failed:', err));
+      return;
+    }
+
+    const logId = `${medicineId}_${Date.now()}`;
     const isoDate = now.toISOString();
 
     // Prepare DB payload (date as ISO string) and local state payload (date as Date instance)
@@ -1820,7 +1936,7 @@ const App = () => {
       });
   };
 
-  const handleSkipMedicine = (medicineId: string, scheduledTime: string) => {
+  const handleSkipMedicine = (medicineId: string, scheduledTime: string, markAsMissed: boolean = false) => {
     if (!householdId) {
       console.error('[handleSkipMedicine] No householdId set, aborting');
       return;
@@ -1831,9 +1947,29 @@ const App = () => {
       return;
     }
 
-    const logId = `${medicineId}_${Date.now()}`;
-    const normalizedScheduled = normalizeTimeString(scheduledTime);
     const now = new Date();
+    const normalizedScheduled = normalizeTimeString(scheduledTime);
+    const status = markAsMissed ? 'MISSED' : 'SKIPPED';
+    
+    // Check for duplicate log (deduplication)
+    const existingLog = findExistingLog(medicineId, scheduledTime, now);
+    if (existingLog) {
+      console.log('[handleSkipMedicine] Log already exists, updating instead of creating:', existingLog.id);
+      const updatedLog = {
+        ...existingLog,
+        status,
+        date: now.toISOString(),
+      };
+      set(ref(db, `households/${householdId}/medicineLogs/${existingLog.id}`), updatedLog)
+        .then(() => {
+          console.log('[handleSkipMedicine] Update success:', existingLog.id);
+          setMedicineLogs(prev => prev.map(l => l.id === existingLog.id ? { ...updatedLog, date: now } as MedicineLog : l));
+        })
+        .catch((err) => console.error('[handleSkipMedicine] Update failed:', err));
+      return;
+    }
+
+    const logId = `${medicineId}_${Date.now()}`;
     const isoDate = now.toISOString();
 
     const logForDB = {
@@ -1842,7 +1978,7 @@ const App = () => {
       medicineName: medicine.name,
       dosage: medicine.dosage,
       scheduledTime: normalizedScheduled,
-      status: 'SKIPPED',
+      status,
       date: isoDate,
     };
     console.log('[handleSkipMedicine] Writing log:', logForDB);

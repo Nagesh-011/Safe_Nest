@@ -118,19 +118,19 @@ export const MedicineCompliance: React.FC<MedicineComplianceProps> = ({
             <div
               className="bg-green-500"
               style={{
-                width: `${(complianceStats.taken / complianceStats.total) * 100}%`,
+                width: `${complianceStats.total > 0 ? (complianceStats.taken / complianceStats.total) * 100 : 0}%`,
               }}
             ></div>
             <div
               className="bg-red-500"
               style={{
-                width: `${(complianceStats.missed / complianceStats.total) * 100}%`,
+                width: `${complianceStats.total > 0 ? (complianceStats.missed / complianceStats.total) * 100 : 0}%`,
               }}
             ></div>
             <div
               className="bg-orange-500"
               style={{
-                width: `${(complianceStats.skipped / complianceStats.total) * 100}%`,
+                width: `${complianceStats.total > 0 ? (complianceStats.skipped / complianceStats.total) * 100 : 0}%`,
               }}
             ></div>
           </div>
@@ -176,13 +176,13 @@ export const MedicineCompliance: React.FC<MedicineComplianceProps> = ({
                 <div
                   className="bg-green-500"
                   style={{
-                    width: `${(stat.taken / stat.total) * 100}%`,
+                    width: `${stat.total > 0 ? (stat.taken / stat.total) * 100 : 0}%`,
                   }}
                 ></div>
                 <div
                   className="bg-red-500"
                   style={{
-                    width: `${(stat.missed / stat.total) * 100}%`,
+                    width: `${stat.total > 0 ? (stat.missed / stat.total) * 100 : 0}%`,
                   }}
                 ></div>
               </div>
