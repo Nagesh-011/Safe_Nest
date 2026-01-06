@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { UserRole, AppStatus, SeniorStatus, ActivityItem, UserProfile, Reminder, Medicine, MedicineLog, VitalReading } from './types';
+import { UserRole, AppStatus, SeniorStatus, ActivityItem, UserProfile, Reminder, Medicine, MedicineLog, VitalReading, BloodPressureLog, BloodSugarLog, SleepLog, DoctorAppointment } from './types';
 import { SeniorHome } from './views/SeniorHome';
 import { ProfileView } from './views/ProfileView';
 import { FallCountdown } from './views/FallCountdown';
@@ -15,6 +15,7 @@ import { VoiceCompanionView } from './views/VoiceCompanionView';
 import { MedicineManager } from './views/MedicineManager';
 import { MedicineReminders } from './views/MedicineReminders';
 import { MedicineCompliance } from './views/MedicineCompliance';
+import { WaterTrackerView } from './views/WaterTrackerView';
 import { BottomNav } from './components/BottomNav';
 import { INITIAL_SENIOR_STATUS } from './constants';
 import { useAppSensors } from './hooks/useAppSensors';
@@ -37,6 +38,10 @@ import {
 } from './services/emergencyShortcuts';
 import { sanitizeForLog } from './utils/sanitize';
 import * as googleFitService from './services/googleFit';
+import { backgroundReminders } from './services/backgroundReminders';
+import { offlineEmergency } from './services/offlineEmergency';
+import { geofenceService } from './services/geofenceService';
+import { waterReminder } from './services/waterReminder';
 
 const normalizePhone = (value: string) => value ? value.replace(/\D/g, '') : '';
 
@@ -124,6 +129,9 @@ const App = () => {
     const savedProfile = localStorage.getItem('safenest_user_profile');
     return !savedProfile;
   });
+  
+  // Track which step to start on when returning to FirstTimeSetup from HouseholdLink
+  const [firstTimeStartStep, setFirstTimeStartStep] = useState<'role' | 'choice' | 'profile' | 'rejoin' | undefined>(undefined);
 
   const [role, setRole] = useState<UserRole | null>(() => {
     if (isFirstTime) return null;
@@ -159,6 +167,38 @@ const App = () => {
   const [activeHouseholdId, setActiveHouseholdId] = useState<string>(() => {
     return localStorage.getItem('safenest_active_household') || '';
   });
+
+  // Sync householdId to native on app startup for Firebase sync when app is closed
+  useEffect(() => {
+    const targetHousehold = role === UserRole.CAREGIVER ? activeHouseholdId : householdId;
+    if (targetHousehold && backgroundReminders.isAvailable()) {
+      backgroundReminders.setHouseholdId(targetHousehold);
+      console.log('[App] Synced householdId to native:', targetHousehold);
+    }
+  }, [householdId, activeHouseholdId, role]);
+
+  // State for exact alarm permission warning
+  const [showAlarmPermissionWarning, setShowAlarmPermissionWarning] = useState(false);
+
+  // Check exact alarm permission on startup (Android 12+ requirement)
+  useEffect(() => {
+    const checkAlarmPermission = async () => {
+      if (!backgroundReminders.isAvailable()) return;
+      
+      const canSchedule = await backgroundReminders.canScheduleExactAlarms();
+      console.log('[App] canScheduleExactAlarms:', canSchedule);
+      
+      if (!canSchedule) {
+        console.warn('[App] ⚠️ Exact alarm permission not granted! Medicine reminders may not work reliably.');
+        setShowAlarmPermissionWarning(true);
+      }
+    };
+    
+    // Only check for seniors (caregivers don't need reminders)
+    if (role === UserRole.SENIOR) {
+      checkAlarmPermission();
+    }
+  }, [role]);
 
 
   // Poll Google Fit for vitals when senior is active and connected
@@ -209,6 +249,15 @@ const App = () => {
   
   // Vitals State
   const [vitalReadings, setVitalReadings] = useState<VitalReading[]>([]);
+  
+  // Health Logs State (BP, Sugar, Sleep) - Synced from Firebase for Caregiver view
+  const [bpLogs, setBpLogs] = useState<BloodPressureLog[]>([]);
+  const [sugarLogs, setSugarLogs] = useState<BloodSugarLog[]>([]);
+  const [sleepLogs, setSleepLogs] = useState<SleepLog[]>([]);
+  const [doctorAppointments, setDoctorAppointments] = useState<DoctorAppointment[]>([]);
+  
+  // Sub-view navigation state (Senior only uses water tracker)
+  const [showWaterTracker, setShowWaterTracker] = useState(false);
   
   // Household Members and Contacts
   const [householdMembers, setHouseholdMembers] = useState<HouseholdMember[]>([]);
@@ -485,29 +534,27 @@ const App = () => {
         return;
       }
 
-      // Check if user already has a different household code
-      const existingHouseholdId = localStorage.getItem('safenest_household_id');
-      console.log('[HouseholdSet] Existing household ID:', existingHouseholdId);
-      if (existingHouseholdId && existingHouseholdId !== cleanCode) {
-        setHouseholdError(`You are already linked to household "${existingHouseholdId}". Cannot join multiple households. Please sign out first to join a different household.`);
-        return;
+      // Check if user already has a different household code (only for seniors - caregivers can have multiple)
+      if (role === UserRole.SENIOR) {
+        const existingHouseholdId = localStorage.getItem('safenest_household_id');
+        console.log('[HouseholdSet] Senior existing household ID:', existingHouseholdId);
+        if (existingHouseholdId && existingHouseholdId !== cleanCode) {
+          setHouseholdError(`You are already linked to household "${existingHouseholdId}". Cannot join multiple households. Please sign out first to join a different household.`);
+          return;
+        }
       }
 
-      // If caregiver, auto-create household meta if it doesn't exist (allows caregivers to initialize households)
+      // If caregiver, check that household exists (must be created by a senior first)
       if (role === UserRole.CAREGIVER) {
         console.log('[HouseholdSet] Caregiver - checking if household exists...');
         const metaSnap = await get(ref(db, `households/${cleanCode}/meta`));
         if (!metaSnap.exists()) {
-          console.log('[HouseholdSet] Household not found - creating for caregiver...');
-          // Auto-create household meta so caregiver can initialize it
-          await set(ref(db, `households/${cleanCode}/meta`), {
-            createdBy: currentUser.name || 'Caregiver',
-            role: 'CAREGIVER',
-            updatedAt: new Date().toISOString(),
-          });
-          console.log('[HouseholdSet] Household meta created by caregiver');
+          console.log('[HouseholdSet] Household not found - rejecting caregiver join attempt');
+          setHouseholdError('Household code not found. Please verify the code with the senior and try again.');
+          setIsValidatingHousehold(false);
+          return;
         } else {
-          console.log('[HouseholdSet] Household already exists');
+          console.log('[HouseholdSet] Household exists - caregiver can join');
         }
       }
 
@@ -553,9 +600,46 @@ const App = () => {
       }
 
       console.log('[HouseholdSet] Setting household ID...');
+      
+      // Handle caregivers differently - they use householdIds array
+      if (role === UserRole.CAREGIVER) {
+        // Get existing household IDs from localStorage
+        const existingIdsStr = localStorage.getItem('safenest_household_ids');
+        const existingIds: string[] = existingIdsStr ? JSON.parse(existingIdsStr) : [];
+        
+        // Add this household if not already in the list
+        if (!existingIds.includes(cleanCode)) {
+          existingIds.push(cleanCode);
+          localStorage.setItem('safenest_household_ids', JSON.stringify(existingIds));
+          setHouseholdIds(existingIds);
+          console.log('[HouseholdSet] Added to householdIds:', existingIds);
+        }
+        
+        // Set as active household
+        localStorage.setItem('safenest_active_household', cleanCode);
+        setActiveHouseholdId(cleanCode);
+        console.log('[HouseholdSet] Set activeHouseholdId:', cleanCode);
+        
+        // Persist caregiver -> households mapping in Firebase so it survives sign out
+        try {
+          const caregiverPhone = (currentUser.phone || '').replace(/\D/g, '');
+          if (caregiverPhone.length === 10) {
+            await set(ref(db, `caregiverIndex/${caregiverPhone}/${cleanCode}`), true);
+            console.log('[HouseholdSet] Caregiver index updated for phone', caregiverPhone, 'code', cleanCode);
+          }
+        } catch (e) {
+          console.warn('[HouseholdSet] Failed to update caregiver index', e);
+        }
+      }
+      
+      // Always set householdId for both roles (used as fallback)
       setHouseholdId(cleanCode);
       localStorage.setItem('safenest_household_id', cleanCode);
       setHouseholdError('');
+      
+      // Store householdId in native for direct Firebase sync when app is closed
+      backgroundReminders.setHouseholdId(cleanCode);
+      
       console.log('[HouseholdSet] Success!');
     } catch (e) {
       console.error('[HouseholdSet Error]', e);
@@ -638,13 +722,26 @@ const App = () => {
                 try {
                   const p: LNPermissionStatus = await LocalNotifications.checkPermissions();
                   if (p.display === 'granted') {
+                    // Find the associated medicine for this reminder
+                    const associatedMedicine = medicines.find(m => 
+                      m.name.toLowerCase() === dueReminder.title.toLowerCase() ||
+                      m.times.includes(currentTime)
+                    );
+                    
                     await LocalNotifications.schedule({
                       notifications: [{
                         id: parseInt(dueReminder.id.replace(/\D/g, ''), 10) || Date.now(),
-                        title: `Medication Time: ${dueReminder.title}`,
-                        body: dueReminder.instructions,
+                        title: `💊 Medication Time: ${dueReminder.title}`,
+                        body: `${dueReminder.instructions || 'Time to take your medicine'}`,
                         sound: 'default',
-                        smallIcon: 'ic_stat_name'
+                        smallIcon: 'ic_stat_name',
+                        channelId: associatedMedicine?.isCritical ? 'critical_medicine' : 'medicine_reminders',
+                        actionTypeId: associatedMedicine ? 'MEDICINE_REMINDER' : undefined,
+                        extra: associatedMedicine ? {
+                          type: 'medicine_reminder',
+                          medicineId: associatedMedicine.id,
+                          scheduledTime: currentTime,
+                        } : undefined
                       }]
                     });
                   } else {
@@ -653,9 +750,11 @@ const App = () => {
                 } catch {}
               } else if ('Notification' in window && Notification.permission === 'granted') {
                 try {
-                  new Notification(`Medication Time: ${dueReminder.title}`, {
-                      body: dueReminder.instructions,
+                  new Notification(`💊 Medication Time: ${dueReminder.title}`, {
+                      body: dueReminder.instructions || 'Time to take your medicine',
                       requireInteraction: true,
+                      tag: `medicine_${dueReminder.id}`,
+                      icon: '/icons/pill.png',
                   });
                 } catch(e) {}
               }
@@ -686,12 +785,34 @@ const App = () => {
         const todayMidnight = new Date();
         todayMidnight.setHours(0, 0, 0, 0);
 
+        // Skip if medicine hasn't started or has ended
         if (medicineStart > now || (medicineEnd && medicineEnd < todayMidnight)) return;
+        
+        // IMPORTANT: Only process if medicine start date is today or earlier
+        // This prevents creating MISSED logs for medicines added retroactively
+        // Also check if the medicine was added today - if so, don't auto-miss past times
+        const medicineCreatedAt = medicine.createdAt ? new Date(medicine.createdAt) : null;
 
         medicine.times.forEach((scheduledTime) => {
           const [hours, minutes] = scheduledTime.split(':').map(Number);
           const scheduledDate = new Date();
           scheduledDate.setHours(hours, minutes, 0, 0);
+          
+          // If medicine was created today after the scheduled time, skip auto-missing
+          // (User can't have missed a reminder that didn't exist yet)
+          if (medicineCreatedAt && isSameLocalDay(medicineCreatedAt, now)) {
+            if (medicineCreatedAt > scheduledDate) {
+              console.log(`[AutoMissed] Skipping ${medicine.name} at ${scheduledTime} - medicine was added after this time`);
+              return;
+            }
+          }
+          
+          // Also skip if medicine start date is in the past but we're only checking today
+          // Don't backfill MISSED for days we weren't running
+          if (!isSameLocalDay(medicineStart, todayMidnight) && medicineStart < todayMidnight) {
+            // Medicine started before today - only auto-miss if we have a way to know
+            // it was actually scheduled (for now, we'll still process but could add more logic)
+          }
 
           // Add grace period
           const overdueThreshold = new Date(scheduledDate.getTime() + graceMinutes * 60 * 1000);
@@ -705,7 +826,11 @@ const App = () => {
             if (!existingLog) {
               console.log(`[AutoMissed] Marking ${medicine.name} at ${scheduledTime} as MISSED`);
               
-              const logId = `${medicine.id}_auto_${Date.now()}`;
+              // Use deterministic log ID based on medicine + date + time to prevent duplicates
+              const dateKey = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}`;
+              const timeKey = normalizeTimeString(scheduledTime).replace(':', '');
+              const logId = `${medicine.id}_auto_${dateKey}_${timeKey}`;
+              
               const logForDB = {
                 id: logId,
                 medicineId: medicine.id,
@@ -900,6 +1025,51 @@ const App = () => {
         });
         console.log('[Notifications] Emergency channel ready');
 
+        // Create medicine reminder channel
+        await (LocalNotifications as any).createChannel?.({
+          id: 'medicine_reminders',
+          name: 'Medicine Reminders',
+          description: 'Daily medication reminders',
+          importance: 4, // IMPORTANCE_HIGH but not as urgent as emergency
+          visibility: 1,
+          vibration: true,
+          lights: true,
+          lightColor: '#8B5CF6', // Purple
+          sound: 'default',
+          vibrationPattern: [200, 100, 200],
+        });
+        console.log('[Notifications] Medicine channel ready');
+
+        // Create critical medicine channel (louder)
+        await (LocalNotifications as any).createChannel?.({
+          id: 'critical_medicine',
+          name: 'Critical Medicine Alerts',
+          description: 'Important medication that must not be missed',
+          importance: 5, // IMPORTANCE_HIGH
+          visibility: 1,
+          vibration: true,
+          lights: true,
+          lightColor: '#EF4444', // Red
+          sound: 'default',
+          vibrationPattern: [500, 200, 500, 200, 500],
+        });
+        console.log('[Notifications] Critical medicine channel ready');
+
+        // Create doctor appointment channel
+        await (LocalNotifications as any).createChannel?.({
+          id: 'doctor_appointments',
+          name: 'Doctor Appointments',
+          description: 'Reminders for upcoming doctor appointments',
+          importance: 4, // IMPORTANCE_HIGH
+          visibility: 1,
+          vibration: true,
+          lights: true,
+          lightColor: '#14B8A6', // Teal
+          sound: 'default',
+          vibrationPattern: [200, 100, 200, 100, 200],
+        });
+        console.log('[Notifications] Doctor appointment channel ready');
+
         // Register action types for fall detection
         await (LocalNotifications as any).registerActionTypes?.({
           types: [
@@ -918,6 +1088,26 @@ const App = () => {
                   destructive: true
                 }
               ]
+            },
+            {
+              id: 'MEDICINE_REMINDER',
+              actions: [
+                {
+                  id: 'TAKEN',
+                  title: '✓ Taken',
+                  foreground: false
+                },
+                {
+                  id: 'SNOOZE',
+                  title: '⏰ Snooze 15m',
+                  foreground: false
+                },
+                {
+                  id: 'SKIP',
+                  title: 'Skip',
+                  foreground: false
+                }
+              ]
             }
           ]
         });
@@ -928,7 +1118,7 @@ const App = () => {
     })();
   }, []);
 
-  // Handle notification actions for fall detection
+  // Handle notification actions for fall detection and medicine reminders
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     
@@ -936,6 +1126,29 @@ const App = () => {
       console.log('[Notification Action]', action);
       const notificationType = action.notification?.extra?.type;
       const notificationId = action.notification?.id;
+      const extra = action.notification?.extra;
+      
+      // Handle medicine reminder actions
+      if (notificationType === 'medicine_reminder' && extra?.medicineId && extra?.scheduledTime) {
+        const { medicineId, scheduledTime } = extra;
+        console.log('[Medicine Notification] Action:', action.actionId, medicineId, scheduledTime);
+        
+        if (action.actionId === 'TAKEN') {
+          handleMarkTaken(medicineId, scheduledTime);
+        } else if (action.actionId === 'SNOOZE') {
+          // Calculate snooze time (15 minutes from now)
+          const now = new Date();
+          now.setMinutes(now.getMinutes() + 15);
+          const snoozeUntil = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+          handleSnoozeMedicine(medicineId, scheduledTime, snoozeUntil);
+        } else if (action.actionId === 'SKIP') {
+          handleSkipMedicine(medicineId, scheduledTime, false);
+        }
+        
+        // Cancel the notification
+        await LocalNotifications.cancel({ notifications: [{ id: notificationId }] });
+        return;
+      }
       
       // Lock screen SOS button
       if (notificationType === 'lock_screen_sos_button' || notificationId === 99999) {
@@ -979,6 +1192,80 @@ const App = () => {
       LocalNotifications.removeAllListeners();
     };
   }, []);
+
+  // ===== APPOINTMENT NOTIFICATION HELPERS =====
+  const scheduleAppointmentNotification = async (apt: DoctorAppointment) => {
+    if (!Capacitor.isNativePlatform()) {
+      console.log('[Appointment Notification] Not on native platform, skipping');
+      return;
+    }
+
+    try {
+      // Parse appointment date and time
+      let aptDate: Date;
+      if (apt.date instanceof Date) {
+        aptDate = new Date(apt.date);
+      } else if (typeof apt.date === 'object' && 'seconds' in (apt.date as any)) {
+        aptDate = new Date((apt.date as any).seconds * 1000);
+      } else {
+        aptDate = new Date(apt.date);
+      }
+
+      const [hours, mins] = apt.time.split(':').map(Number);
+      aptDate.setHours(hours, mins, 0, 0);
+
+      // Calculate notification time (X minutes before)
+      const reminderMinutes = apt.reminderBefore || 60;
+      const notificationTime = new Date(aptDate.getTime() - reminderMinutes * 60 * 1000);
+
+      // Don't schedule if notification time has already passed
+      if (notificationTime <= new Date()) {
+        console.log('[Appointment Notification] Notification time has passed, skipping');
+        return;
+      }
+
+      // Create unique notification ID based on appointment ID
+      const notificationId = Math.abs(apt.id.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) % 2147483647;
+
+      const reminderText = reminderMinutes >= 60 
+        ? `${Math.floor(reminderMinutes / 60)} hour${reminderMinutes >= 120 ? 's' : ''} ${reminderMinutes % 60 > 0 ? `${reminderMinutes % 60} min` : ''}`
+        : `${reminderMinutes} minutes`;
+
+      await LocalNotifications.schedule({
+        notifications: [{
+          id: notificationId,
+          title: `🏥 Doctor Appointment in ${reminderText}`,
+          body: `${apt.doctorName}${apt.specialty ? ` (${apt.specialty})` : ''} at ${apt.time}${apt.hospitalName ? ` - ${apt.hospitalName}` : ''}`,
+          schedule: { at: notificationTime },
+          channelId: 'doctor_appointments',
+          extra: {
+            type: 'doctor_appointment',
+            appointmentId: apt.id,
+            doctorName: apt.doctorName,
+            time: apt.time,
+          },
+          smallIcon: 'ic_notification',
+          largeIcon: 'ic_notification',
+        }]
+      });
+
+      console.log('[Appointment Notification] Scheduled for:', notificationTime, 'Apt:', apt.doctorName);
+    } catch (error) {
+      console.error('[Appointment Notification] Error scheduling:', error);
+    }
+  };
+
+  const cancelAppointmentNotification = async (aptId: string) => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    try {
+      const notificationId = Math.abs(aptId.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) % 2147483647;
+      await LocalNotifications.cancel({ notifications: [{ id: notificationId }] });
+      console.log('[Appointment Notification] Cancelled for apt:', aptId);
+    } catch (error) {
+      console.error('[Appointment Notification] Error cancelling:', error);
+    }
+  };
 
   // --- FCM Setup for Background Notifications ---
   useEffect(() => {
@@ -1215,6 +1502,7 @@ const App = () => {
     setCurrentUser(profile);
     setRole(selectedRole);
     setIsFirstTime(false);
+    setFirstTimeStartStep(undefined); // Reset start step
   };
 
   const handleRejoinWithCode = async (code: string, profile: UserProfile, selectedRole: UserRole) => {
@@ -1341,6 +1629,10 @@ const App = () => {
       setHouseholdId(cleanCode);
       setIsFirstTime(false);
       setHouseholdError('');
+      
+      // Store householdId in native for direct Firebase sync when app is closed
+      backgroundReminders.setHouseholdId(cleanCode);
+      
       console.log('[Rejoin] Success!');
       
     } catch (e) {
@@ -1354,16 +1646,27 @@ const App = () => {
   };
 
   // Validate existing household code when caregiver role is active
+  // For caregivers, validate the activeHouseholdId (currently selected senior)
   useEffect(() => {
     const validate = async () => {
-      if (role !== UserRole.CAREGIVER || !householdId) return;
+      // Skip if not caregiver or no active household selected
+      if (role !== UserRole.CAREGIVER) return;
+      const idToValidate = activeHouseholdId || householdIds[0];
+      if (!idToValidate) return;
+      
       setIsValidatingHousehold(true);
       try {
-        const metaSnap = await get(ref(db, `households/${householdId}/meta`));
+        const metaSnap = await get(ref(db, `households/${idToValidate}/meta`));
         if (!metaSnap.exists()) {
           setHouseholdError('Household not found. Enter the correct code shared by the senior.');
-          setHouseholdId('');
-          localStorage.removeItem('safenest_household_id');
+          // Remove invalid household from list
+          const updatedIds = householdIds.filter(id => id !== idToValidate);
+          setHouseholdIds(updatedIds);
+          localStorage.setItem('safenest_household_ids', JSON.stringify(updatedIds));
+          if (activeHouseholdId === idToValidate) {
+            setActiveHouseholdId(updatedIds[0] || '');
+            localStorage.setItem('safenest_active_household', updatedIds[0] || '');
+          }
         } else {
           setHouseholdError('');
         }
@@ -1374,7 +1677,7 @@ const App = () => {
       }
     };
     validate();
-  }, [role, householdId]);
+  }, [role, activeHouseholdId, householdIds]);
 
   // Caregiver: Load all linked households from Firebase using caregiver phone (persists across sign out)
   useEffect(() => {
@@ -1452,9 +1755,11 @@ const App = () => {
   }, [role, householdId, seniorStatus]);
 
   // Caregiver device: subscribe to senior status in Firebase
+  // Use activeHouseholdId (the senior they're currently viewing)
   useEffect(() => {
-    if (role !== UserRole.CAREGIVER || !householdId) return;
-    const path = `households/${householdId}/status`;
+    const targetHousehold = activeHouseholdId || householdIds[0];
+    if (role !== UserRole.CAREGIVER || !targetHousehold) return;
+    const path = `households/${targetHousehold}/status`;
     const r = ref(db, path);
     
     let previousStatus = seniorStatus.status;
@@ -1533,7 +1838,7 @@ const App = () => {
       }
     );
     return () => unsub();
-  }, [role, householdId, seniorStatus.status]);
+  }, [role, activeHouseholdId, householdIds, seniorStatus.status]);
 
   // Register current user as household member when household is set
   useEffect(() => {
@@ -1608,10 +1913,15 @@ const App = () => {
 
   // Subscribe to medicines
   useEffect(() => {
-    if (!householdId) return;
+    if (!householdId) {
+      console.log('[App] Medicines subscription: No householdId, skipping');
+      return;
+    }
+    console.log('[App] Medicines subscription: Listening to household:', householdId);
     const medicinesRef = ref(db, `households/${householdId}/medicines`);
     const unsub = onValue(medicinesRef, (snapshot) => {
       const data = snapshot.val();
+      console.log('[App] onValue medicines received for household:', householdId, 'data:', data ? Object.keys(data).length + ' items' : 'null');
       if (data) {
         const medicinesList = Object.values(data).map((med: any) => ({
           ...med,
@@ -1620,13 +1930,20 @@ const App = () => {
           createdAt: new Date(med.createdAt),
           updatedAt: new Date(med.updatedAt),
         })) as Medicine[];
+        console.log('[App] Setting medicines:', medicinesList.length, 'items');
         setMedicines(medicinesList);
+        
+        // Schedule background reminders for all medicines (ensures alarms survive app restart)
+        if (role === 'senior' && backgroundReminders.isAvailable()) {
+          backgroundReminders.scheduleAllMedicines(medicinesList);
+        }
       } else {
+        console.log('[App] Setting medicines: empty array');
         setMedicines([]);
       }
     });
     return () => unsub();
-  }, [householdId]);
+  }, [householdId, role]);
 
   // Subscribe to medicine logs
   useEffect(() => {
@@ -1649,6 +1966,108 @@ const App = () => {
     return () => unsub();
   }, [householdId]);
 
+  // Sync pending medicine actions (taken/snoozed from notifications while app was closed)
+  useEffect(() => {
+    if (!householdId || role !== UserRole.SENIOR) return;
+    
+    const syncPendingActions = async () => {
+      try {
+        const pending = await backgroundReminders.getPendingActions();
+        if (pending.length === 0) return;
+        
+        console.log('[App] Syncing', pending.length, 'pending medicine actions from background');
+        
+        for (const action of pending) {
+          const logId = `${action.medicineId}-${action.timestamp}`;
+          const logEntry: any = {
+            id: logId,
+            medicineId: action.medicineId,
+            date: new Date(action.timestamp).toISOString(),
+            takenAt: action.action === 'taken' ? new Date(action.timestamp).toISOString() : undefined,
+            status: action.action === 'skipped' ? 'skipped' : (action.action === 'taken' ? 'taken' : 'snoozed'),
+          };
+          
+          // Remove undefined values
+          Object.keys(logEntry).forEach(key => {
+            if (logEntry[key] === undefined) delete logEntry[key];
+          });
+          
+          await set(ref(db, `households/${householdId}/medicineLogs/${logId}`), logEntry);
+          console.log('[App] Synced action:', action.action, 'for medicine:', action.medicineId);
+        }
+        
+        // Clear pending actions after sync
+        await backgroundReminders.clearPendingActions();
+        console.log('[App] Cleared pending background actions');
+      } catch (error) {
+        console.error('[App] Failed to sync pending actions:', error);
+      }
+    };
+    
+    // Sync caregiver alerts (missed medicines) and send to Firebase for caregivers to see
+    const syncCaregiverAlerts = async () => {
+      try {
+        const alerts = await backgroundReminders.getPendingCaregiverAlerts();
+        if (alerts.length === 0) return;
+        
+        console.log('[App] Syncing', alerts.length, 'caregiver alerts (missed medicines)');
+        
+        for (const alert of alerts) {
+          // Create an alert entry in Firebase for caregivers
+          const alertId = `missed_${alert.medicineId}_${alert.timestamp}`;
+          const alertEntry = {
+            id: alertId,
+            type: 'MEDICINE_MISSED',
+            medicineId: alert.medicineId,
+            medicineName: alert.medicineName,
+            dosage: alert.dosage,
+            scheduledTime: alert.scheduledTime,
+            isCritical: alert.isCritical,
+            timestamp: new Date(alert.timestamp).toISOString(),
+            date: alert.date,
+            acknowledged: false,
+            createdAt: new Date().toISOString(),
+          };
+          
+          // Store in household alerts collection (caregivers subscribe to this)
+          await set(ref(db, `households/${householdId}/alerts/${alertId}`), alertEntry);
+          console.log('[App] Sent caregiver alert:', alert.medicineName, 'MISSED at', alert.scheduledTime);
+          
+          // Also log as MISSED in medicine logs if not already logged
+          const logId = `${alert.medicineId}_missed_${alert.timestamp}`;
+          const existingLogs = medicineLogs.filter(l => 
+            l.medicineId === alert.medicineId && 
+            l.scheduledTime === alert.scheduledTime &&
+            l.date && new Date(l.date).toDateString() === new Date(alert.timestamp).toDateString()
+          );
+          
+          if (existingLogs.length === 0) {
+            const missedLog = {
+              id: logId,
+              medicineId: alert.medicineId,
+              medicineName: alert.medicineName,
+              dosage: alert.dosage,
+              scheduledTime: alert.scheduledTime,
+              status: 'MISSED',
+              date: new Date(alert.timestamp).toISOString(),
+            };
+            await set(ref(db, `households/${householdId}/medicineLogs/${logId}`), missedLog);
+            console.log('[App] Created MISSED log for:', alert.medicineName);
+          }
+        }
+        
+        // Clear pending alerts after sync
+        await backgroundReminders.clearPendingCaregiverAlerts();
+        console.log('[App] Cleared pending caregiver alerts');
+      } catch (error) {
+        console.error('[App] Failed to sync caregiver alerts:', error);
+      }
+    };
+    
+    syncPendingActions();
+    syncCaregiverAlerts();
+  }, [householdId, role]);
+
   // Subscribe to vitals
   useEffect(() => {
     if (!householdId) return;
@@ -1669,6 +2088,101 @@ const App = () => {
     });
     return () => unsub();
   }, [householdId]);
+
+  // Subscribe to health logs (BP, Sugar, Sleep, Appointments)
+  useEffect(() => {
+    if (!householdId) return;
+    const unsubscribers: Array<() => void> = [];
+
+    // BP Logs
+    const bpRef = ref(db, `households/${householdId}/bpLogs`);
+    unsubscribers.push(onValue(bpRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const logs = Object.values(data).map((log: any) => ({
+          ...log,
+          timestamp: new Date(log.timestamp),
+        })) as BloodPressureLog[];
+        setBpLogs(logs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
+      } else {
+        setBpLogs([]);
+      }
+    }));
+
+    // Sugar Logs
+    const sugarRef = ref(db, `households/${householdId}/sugarLogs`);
+    unsubscribers.push(onValue(sugarRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const logs = Object.values(data).map((log: any) => ({
+          ...log,
+          timestamp: new Date(log.timestamp),
+        })) as BloodSugarLog[];
+        setSugarLogs(logs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
+      } else {
+        setSugarLogs([]);
+      }
+    }));
+
+    // Sleep Logs
+    const sleepRef = ref(db, `households/${householdId}/sleepLogs`);
+    unsubscribers.push(onValue(sleepRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const logs = Object.values(data).map((log: any) => ({
+          ...log,
+          date: new Date(log.date),
+        })) as SleepLog[];
+        setSleepLogs(logs.sort((a, b) => b.date.getTime() - a.date.getTime()));
+      } else {
+        setSleepLogs([]);
+      }
+    }));
+
+    // Doctor Appointments
+    const aptRef = ref(db, `households/${householdId}/appointments`);
+    unsubscribers.push(onValue(aptRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const apts = Object.values(data).map((apt: any) => ({
+          ...apt,
+          date: new Date(apt.date),
+          createdAt: new Date(apt.createdAt),
+        })) as DoctorAppointment[];
+        setDoctorAppointments(apts.sort((a, b) => a.date.getTime() - b.date.getTime()));
+      } else {
+        setDoctorAppointments([]);
+      }
+    }));
+
+    return () => unsubscribers.forEach(unsub => unsub());
+  }, [householdId]);
+
+  // Initialize services (geofence, water reminders, offline emergency)
+  useEffect(() => {
+    if (!householdId || role !== UserRole.SENIOR) return;
+
+    // Initialize geofence monitoring
+    geofenceService.init(householdId);
+    geofenceService.startMonitoring();
+
+    // Start water reminders
+    waterReminder.startReminders();
+
+    // Sync offline emergency data
+    if (currentUser && contacts.length > 0) {
+      offlineEmergency.syncData({
+        contacts,
+        seniorName: currentUser.name,
+        seniorPhone: currentUser.phone,
+      });
+    }
+
+    return () => {
+      geofenceService.stopMonitoring();
+      waterReminder.stopReminders();
+    };
+  }, [householdId, role, currentUser, contacts]);
 
   // Multi-household support for caregivers - fetch senior info from all households
   useEffect(() => {
@@ -1848,39 +2362,142 @@ const App = () => {
   }, []);
 
   // Medicine handlers
+  // Seniors use householdId (their home)
+  // Caregivers use activeHouseholdId (the senior they're managing)
+  const getTargetHouseholdId = (): string => {
+    if (role === UserRole.CAREGIVER) {
+      // Caregivers: prefer activeHouseholdId, fallback to first in list, then householdId
+      const target = activeHouseholdId || householdIds[0] || householdId || '';
+      console.log('[getTargetHouseholdId] CAREGIVER -> target:', target, 
+        '(activeHouseholdId:', activeHouseholdId, 
+        ', householdIds[0]:', householdIds[0], 
+        ', householdId:', householdId, ')');
+      return target;
+    }
+    // Seniors use their own householdId
+    console.log('[getTargetHouseholdId] SENIOR -> householdId:', householdId);
+    return householdId;
+  };
+
   const handleAddMedicine = (medicine: Medicine) => {
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) {
+      console.error('[handleAddMedicine] No target household ID');
+      return;
+    }
     const medicineId = Date.now().toString();
-    const newMedicine = { ...medicine, id: medicineId };
-    // Remove undefined values for Firebase
-    Object.keys(newMedicine).forEach(key => {
-      if (newMedicine[key as keyof Medicine] === undefined) {
-        delete newMedicine[key as keyof Medicine];
+    
+    // Helper to safely convert any date value to ISO string
+    const toISOString = (dateValue: any): string => {
+      if (!dateValue) return new Date().toISOString();
+      if (dateValue instanceof Date) {
+        return isNaN(dateValue.getTime()) ? new Date().toISOString() : dateValue.toISOString();
+      }
+      // Try parsing string
+      const parsed = new Date(dateValue);
+      return isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+    };
+    
+    // Convert dates to ISO strings for Firebase
+    const medicineForDB: any = {
+      ...medicine,
+      id: medicineId,
+      startDate: toISOString(medicine.startDate),
+      endDate: medicine.endDate ? toISOString(medicine.endDate) : null,
+      createdAt: toISOString(medicine.createdAt),
+      updatedAt: new Date().toISOString(),
+    };
+    
+    console.log('[handleAddMedicine] Date conversion:', {
+      inputStartDate: medicine.startDate,
+      inputType: typeof medicine.startDate,
+      outputStartDate: medicineForDB.startDate
+    });
+    
+    // Remove undefined/null values for Firebase
+    Object.keys(medicineForDB).forEach(key => {
+      if (medicineForDB[key] === undefined || medicineForDB[key] === null) {
+        delete medicineForDB[key];
       }
     });
-    set(ref(db, `households/${householdId}/medicines/${medicineId}`), newMedicine);
+    
+    console.log('[handleAddMedicine] Saving to household:', targetHousehold, 'medicine:', medicineForDB);
+    set(ref(db, `households/${targetHousehold}/medicines/${medicineId}`), medicineForDB)
+      .then(() => {
+        console.log('[handleAddMedicine] ✅ SUCCESS - Saved to Firebase:', targetHousehold);
+        // Schedule background reminders (works when app is closed)
+        backgroundReminders.scheduleMedicine({ ...medicine, id: medicineId }).then(scheduled => {
+          if (scheduled) {
+            console.log('[handleAddMedicine] ✅ Background reminders scheduled');
+          }
+        });
+      })
+      .catch((err) => {
+        console.error('[handleAddMedicine] ❌ FAILED - Firebase error:', err);
+      });
   };
 
   const handleUpdateMedicine = (medicine: Medicine) => {
-    // Remove undefined values for Firebase
-    const cleanMedicine = { ...medicine };
-    Object.keys(cleanMedicine).forEach(key => {
-      if (cleanMedicine[key as keyof Medicine] === undefined) {
-        delete cleanMedicine[key as keyof Medicine];
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) {
+      console.error('[handleUpdateMedicine] No target household ID');
+      return;
+    }
+    
+    // Convert dates to ISO strings for Firebase
+    const medicineForDB: any = {
+      ...medicine,
+      startDate: medicine.startDate instanceof Date 
+        ? medicine.startDate.toISOString() 
+        : medicine.startDate,
+      endDate: medicine.endDate 
+        ? (medicine.endDate instanceof Date ? medicine.endDate.toISOString() : medicine.endDate)
+        : null,
+      updatedAt: new Date().toISOString(),
+    };
+    
+    // Remove undefined/null values for Firebase
+    Object.keys(medicineForDB).forEach(key => {
+      if (medicineForDB[key] === undefined || medicineForDB[key] === null) {
+        delete medicineForDB[key];
       }
     });
-    set(ref(db, `households/${householdId}/medicines/${medicine.id}`), cleanMedicine);
+    
+    console.log('[handleUpdateMedicine] Updating in household:', targetHousehold, 'medicine:', medicineForDB);
+    set(ref(db, `households/${targetHousehold}/medicines/${medicine.id}`), medicineForDB)
+      .then(() => {
+        // Re-schedule background reminders with updated times
+        backgroundReminders.scheduleMedicine(medicine).then(scheduled => {
+          if (scheduled) {
+            console.log('[handleUpdateMedicine] ✅ Background reminders re-scheduled');
+          }
+        });
+      });
   };
 
   const handleDeleteMedicine = (medicineId: string) => {
-    set(ref(db, `households/${householdId}/medicines/${medicineId}`), null);
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) {
+      console.error('[handleDeleteMedicine] No target household ID');
+      return;
+    }
+    console.log('[handleDeleteMedicine] Deleting from household:', targetHousehold);
+    // Cancel background reminders for this medicine
+    backgroundReminders.cancelMedicine(medicineId);
+    set(ref(db, `households/${targetHousehold}/medicines/${medicineId}`), null);
   };
 
   const handleMarkTaken = (medicineId: string, scheduledTime: string) => {
-    if (!householdId) {
-      console.error('[handleMarkTaken] No householdId set, aborting');
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) {
+      console.error('[handleMarkTaken] No target household ID, aborting');
       return;
     }
-    const medicine = medicines.find(m => m.id === medicineId);
+    // For caregivers, look in allMedicines; for seniors, use medicines
+    const medsToSearch = role === UserRole.CAREGIVER && activeHouseholdId 
+      ? (allMedicines[activeHouseholdId] || []) 
+      : medicines;
+    const medicine = medsToSearch.find(m => m.id === medicineId);
     if (!medicine) {
       console.log('[handleMarkTaken] Medicine not found:', medicineId);
       return;
@@ -1900,7 +2517,7 @@ const App = () => {
         actualTime: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
         date: now.toISOString(),
       };
-      set(ref(db, `households/${householdId}/medicineLogs/${existingLog.id}`), updatedLog)
+      set(ref(db, `households/${targetHousehold}/medicineLogs/${existingLog.id}`), updatedLog)
         .then(() => {
           console.log('[handleMarkTaken] Update success:', existingLog.id);
           setMedicineLogs(prev => prev.map(l => l.id === existingLog.id ? { ...updatedLog, date: now } as MedicineLog : l));
@@ -1924,12 +2541,30 @@ const App = () => {
       date: isoDate,
     };
 
-    console.log('[handleMarkTaken] Writing log:', logForDB);
-    set(ref(db, `households/${householdId}/medicineLogs/${logId}`), logForDB)
+    console.log('[handleMarkTaken] Writing log to household:', targetHousehold, logForDB);
+    set(ref(db, `households/${targetHousehold}/medicineLogs/${logId}`), logForDB)
       .then(() => {
         console.log('[handleMarkTaken] Write success:', logId);
         // Push a Date instance into local state for consistent behavior
         setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
+        
+        // Cancel any pending missed medicine follow-up notifications (native)
+        backgroundReminders.markMedicineTaken(medicineId, normalizedScheduled);
+        
+        // Auto-decrement remaining quantity if refill tracking is enabled
+        if (medicine.remainingQuantity !== undefined && medicine.remainingQuantity > 0) {
+          const newRemaining = medicine.remainingQuantity - 1;
+          console.log('[handleMarkTaken] Decrementing remaining quantity:', medicine.remainingQuantity, '->', newRemaining);
+          set(ref(db, `households/${targetHousehold}/medicines/${medicineId}/remainingQuantity`), newRemaining)
+            .then(() => {
+              console.log('[handleMarkTaken] Remaining quantity updated');
+              // Update local state
+              setMedicines(prev => prev.map(m => 
+                m.id === medicineId ? { ...m, remainingQuantity: newRemaining } : m
+              ));
+            })
+            .catch((err) => console.error('[handleMarkTaken] Failed to update remaining quantity:', err));
+        }
       })
       .catch((err) => {
         console.error('[handleMarkTaken] Write failed:', err);
@@ -1937,11 +2572,16 @@ const App = () => {
   };
 
   const handleSkipMedicine = (medicineId: string, scheduledTime: string, markAsMissed: boolean = false) => {
-    if (!householdId) {
-      console.error('[handleSkipMedicine] No householdId set, aborting');
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) {
+      console.error('[handleSkipMedicine] No target household ID, aborting');
       return;
     }
-    const medicine = medicines.find(m => m.id === medicineId);
+    // For caregivers, look in allMedicines; for seniors, use medicines
+    const medsToSearch = role === UserRole.CAREGIVER && activeHouseholdId 
+      ? (allMedicines[activeHouseholdId] || []) 
+      : medicines;
+    const medicine = medsToSearch.find(m => m.id === medicineId);
     if (!medicine) {
       console.log('[handleSkipMedicine] Medicine not found:', medicineId);
       return;
@@ -1960,7 +2600,7 @@ const App = () => {
         status,
         date: now.toISOString(),
       };
-      set(ref(db, `households/${householdId}/medicineLogs/${existingLog.id}`), updatedLog)
+      set(ref(db, `households/${targetHousehold}/medicineLogs/${existingLog.id}`), updatedLog)
         .then(() => {
           console.log('[handleSkipMedicine] Update success:', existingLog.id);
           setMedicineLogs(prev => prev.map(l => l.id === existingLog.id ? { ...updatedLog, date: now } as MedicineLog : l));
@@ -1981,8 +2621,8 @@ const App = () => {
       status,
       date: isoDate,
     };
-    console.log('[handleSkipMedicine] Writing log:', logForDB);
-    set(ref(db, `households/${householdId}/medicineLogs/${logId}`), logForDB)
+    console.log('[handleSkipMedicine] Writing log to household:', targetHousehold, logForDB);
+    set(ref(db, `households/${targetHousehold}/medicineLogs/${logId}`), logForDB)
       .then(() => {
         console.log('[handleSkipMedicine] Write success:', logId);
         setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
@@ -1992,10 +2632,75 @@ const App = () => {
       });
   };
 
+  const handleSnoozeMedicine = (medicineId: string, scheduledTime: string, snoozeUntil: string) => {
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) {
+      console.error('[handleSnoozeMedicine] No target household ID, aborting');
+      return;
+    }
+    const medsToSearch = role === UserRole.CAREGIVER && activeHouseholdId 
+      ? (allMedicines[activeHouseholdId] || []) 
+      : medicines;
+    const medicine = medsToSearch.find(m => m.id === medicineId);
+    if (!medicine) {
+      console.log('[handleSnoozeMedicine] Medicine not found:', medicineId);
+      return;
+    }
+
+    const now = new Date();
+    const normalizedScheduled = normalizeTimeString(scheduledTime);
+    
+    // Check for existing log to update snooze count
+    const existingLog = findExistingLog(medicineId, scheduledTime, now);
+    if (existingLog) {
+      console.log('[handleSnoozeMedicine] Updating existing log with snooze:', existingLog.id);
+      const currentSnoozeCount = existingLog.snoozeCount || 0;
+      const updatedLog = {
+        ...existingLog,
+        status: 'SNOOZED',
+        snoozedUntil: snoozeUntil,
+        snoozeCount: currentSnoozeCount + 1,
+        date: now.toISOString(),
+      };
+      set(ref(db, `households/${targetHousehold}/medicineLogs/${existingLog.id}`), updatedLog)
+        .then(() => {
+          console.log('[handleSnoozeMedicine] Update success:', existingLog.id);
+          setMedicineLogs(prev => prev.map(l => l.id === existingLog.id ? { ...updatedLog, date: now } as MedicineLog : l));
+        })
+        .catch((err) => console.error('[handleSnoozeMedicine] Update failed:', err));
+      return;
+    }
+
+    const logId = `${medicineId}_${Date.now()}`;
+    const isoDate = now.toISOString();
+
+    const logForDB = {
+      id: logId,
+      medicineId,
+      medicineName: medicine.name,
+      dosage: medicine.dosage,
+      scheduledTime: normalizedScheduled,
+      status: 'SNOOZED',
+      snoozedUntil: snoozeUntil,
+      snoozeCount: 1,
+      date: isoDate,
+    };
+    console.log('[handleSnoozeMedicine] Writing log to household:', targetHousehold, logForDB);
+    set(ref(db, `households/${targetHousehold}/medicineLogs/${logId}`), logForDB)
+      .then(() => {
+        console.log('[handleSnoozeMedicine] Write success:', logId);
+        setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
+      })
+      .catch((err) => {
+        console.error('[handleSnoozeMedicine] Write failed:', err);
+      });
+  };
+
   // Vitals handler
   const handleAddVital = (vital: Omit<VitalReading, 'id' | 'timestamp'>) => {
-    if (!householdId) {
-      console.error('[handleAddVital] No householdId set, aborting');
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) {
+      console.error('[handleAddVital] No target household ID, aborting');
       return;
     }
     
@@ -2003,20 +2708,147 @@ const App = () => {
     const timestamp = new Date();
     const vitalWithId: VitalReading = { ...vital, id: vitalId, timestamp };
     
-    // Prepare for Firebase (convert Date to ISO string)
-    const vitalForDB = {
-      ...vitalWithId,
+    // Prepare for Firebase - sanitize undefined values (Firebase doesn't allow undefined)
+    const vitalForDB: Record<string, any> = {
+      id: vitalId,
+      type: vital.type,
+      value: vital.value,
+      unit: vital.unit || '',
+      source: vital.source || 'manual',
+      enteredBy: vital.enteredBy || 'senior',
+      notes: vital.notes || '',
       timestamp: timestamp.toISOString(),
     };
     
-    console.log('[handleAddVital] Writing vital:', vitalForDB);
-    set(ref(db, `households/${householdId}/vitals/${vitalId}`), vitalForDB)
+    // Add optional fields for blood pressure
+    if (vital.systolic !== undefined) vitalForDB.systolic = vital.systolic;
+    if (vital.diastolic !== undefined) vitalForDB.diastolic = vital.diastolic;
+    
+    console.log('[handleAddVital] Writing vital to household:', targetHousehold, vitalForDB);
+    set(ref(db, `households/${targetHousehold}/vitals/${vitalId}`), vitalForDB)
       .then(() => {
         console.log('[handleAddVital] Write success:', vitalId);
         setVitalReadings(prev => [...prev, vitalWithId]);
       })
       .catch((err) => {
         console.error('[handleAddVital] Write failed:', err);
+      });
+  };
+
+  // ===== HEALTH LOGS HANDLERS =====
+  const handleAddBPLog = (log: Omit<BloodPressureLog, 'id'>) => {
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) return;
+    
+    const logId = Date.now().toString();
+    const logWithId: BloodPressureLog = { ...log, id: logId };
+    const logForDB = { ...logWithId, timestamp: log.timestamp.toISOString() };
+    
+    set(ref(db, `households/${targetHousehold}/bpLogs/${logId}`), logForDB)
+      .then(() => {
+        setBpLogs(prev => [logWithId, ...prev]);
+      });
+  };
+
+  const handleAddSugarLog = (log: Omit<BloodSugarLog, 'id'>) => {
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) return;
+    
+    const logId = Date.now().toString();
+    const logWithId: BloodSugarLog = { ...log, id: logId };
+    const logForDB = { ...logWithId, timestamp: log.timestamp.toISOString() };
+    
+    set(ref(db, `households/${targetHousehold}/sugarLogs/${logId}`), logForDB)
+      .then(() => {
+        setSugarLogs(prev => [logWithId, ...prev]);
+      });
+  };
+
+  const handleAddSleepLog = (log: Omit<SleepLog, 'id'>) => {
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) return;
+    
+    const logId = Date.now().toString();
+    const logWithId: SleepLog = { ...log, id: logId };
+    const logForDB = { ...logWithId, date: log.date.toISOString() };
+    
+    set(ref(db, `households/${targetHousehold}/sleepLogs/${logId}`), logForDB)
+      .then(() => {
+        setSleepLogs(prev => [logWithId, ...prev]);
+      });
+  };
+
+  // ===== DOCTOR APPOINTMENT HANDLERS =====
+  const handleAddAppointment = (apt: Omit<DoctorAppointment, 'id' | 'createdAt'>) => {
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) return;
+    
+    const aptId = Date.now().toString();
+    const aptWithId: DoctorAppointment = { 
+      ...apt, 
+      id: aptId, 
+      createdAt: new Date() 
+    };
+    
+    // Sanitize: Remove undefined values (Firebase doesn't allow undefined)
+    const aptForDB: Record<string, any> = {
+      id: aptId,
+      doctorName: apt.doctorName || '',
+      specialty: apt.specialty || '',
+      hospitalName: apt.hospitalName || '',
+      address: apt.address || '',
+      phone: apt.phone || '',
+      date: apt.date.toISOString(),
+      time: apt.time || '',
+      purpose: apt.purpose || '',
+      notes: apt.notes || '',
+      reminderBefore: apt.reminderBefore || 60,
+      status: apt.status || 'UPCOMING',
+      createdBy: apt.createdBy || 'caregiver',
+      createdAt: aptWithId.createdAt.toISOString()
+    };
+    
+    set(ref(db, `households/${targetHousehold}/appointments/${aptId}`), aptForDB)
+      .then(() => {
+        setDoctorAppointments(prev => [aptWithId, ...prev]);
+        // Schedule notification for the appointment
+        scheduleAppointmentNotification(aptWithId);
+      });
+  };
+
+  const handleUpdateAppointment = (id: string, updates: Partial<DoctorAppointment>) => {
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) return;
+    
+    const existing = doctorAppointments.find(a => a.id === id);
+    if (!existing) return;
+    
+    const updated = { ...existing, ...updates };
+    const updatedForDB: any = {
+      ...updated,
+      date: updated.date instanceof Date ? updated.date.toISOString() : updated.date,
+      createdAt: updated.createdAt instanceof Date ? updated.createdAt.toISOString() : updated.createdAt
+    };
+    
+    set(ref(db, `households/${targetHousehold}/appointments/${id}`), updatedForDB)
+      .then(() => {
+        setDoctorAppointments(prev => prev.map(a => a.id === id ? updated : a));
+        // Reschedule notification with updated details
+        cancelAppointmentNotification(id);
+        scheduleAppointmentNotification(updated);
+      });
+  };
+
+  const handleDeleteAppointment = (id: string) => {
+    const targetHousehold = getTargetHouseholdId();
+    if (!targetHousehold) return;
+    
+    // Cancel the notification first
+    cancelAppointmentNotification(id);
+    
+    set(ref(db, `households/${targetHousehold}/appointments/${id}`), null)
+      .then(() => {
+        setDoctorAppointments(prev => prev.filter(a => a.id !== id));
       });
   };
 
@@ -2152,7 +2984,10 @@ const App = () => {
   // Logic to determine if we should show the bottom navigation
   const shouldShowNav = role === UserRole.SENIOR && 
                         appStatus === AppStatus.IDLE && 
-                        !isEditingProfile;
+                        !isEditingProfile &&
+                        !showWaterTracker &&
+                        !isFirstTime &&
+                        householdId; // Don't show nav if household not set up yet
 
   // Render ONLY the active view (Nav bar is handled separately)
   const renderCurrentView = () => {
@@ -2196,6 +3031,7 @@ const App = () => {
           isValidatingRejoin={isValidatingHousehold}
           existingProfile={currentUser}
           existingRole={role}
+          startStep={firstTimeStartStep}
         />
       );
     }
@@ -2203,14 +3039,23 @@ const App = () => {
     
 
     // Require household link before proceeding
-    if (!householdId) {
+    // Seniors need householdId, Caregivers need activeHouseholdId (from householdIds)
+    const needsHouseholdSetup = role === UserRole.SENIOR 
+      ? !householdId 
+      : (!activeHouseholdId && householdIds.length === 0);
+    
+    if (needsHouseholdSetup) {
       return (
         <HouseholdLink
           role={role}
           onSubmit={handleHouseholdSet}
-          existingCode={householdId}
+          existingCode={role === UserRole.SENIOR ? householdId : activeHouseholdId}
           errorMessage={householdError}
           isValidating={isValidatingHousehold}
+          onBack={() => {
+            setFirstTimeStartStep('choice');
+            setIsFirstTime(true);
+          }}
         />
       );
     }
@@ -2230,10 +3075,19 @@ const App = () => {
 
     if (role === UserRole.CAREGIVER) {
       const senior = householdMembers.find(m => m.role === UserRole.SENIOR);
-      const caregiverSelectedHouseholdId = activeHouseholdId || householdId;
-      const caregiverLogs = role === UserRole.CAREGIVER ? (allMedicineLogs[caregiverSelectedHouseholdId] || []) : medicineLogs;
-      const caregiverMeds = role === UserRole.CAREGIVER ? (allMedicines[caregiverSelectedHouseholdId] || medicines) : medicines;
-      console.log('[App] Caregiver render: selectedHousehold=', caregiverSelectedHouseholdId, 'caregiverMeds=', caregiverMeds.length, 'caregiverLogs=', caregiverLogs.length);
+      // Caregivers use activeHouseholdId directly (no fallback to householdId)
+      const caregiverSelectedHouseholdId = activeHouseholdId || householdIds[0] || householdId || '';
+      const caregiverLogs = allMedicineLogs[caregiverSelectedHouseholdId] || [];
+      const caregiverMeds = allMedicines[caregiverSelectedHouseholdId] || [];
+      console.log('[App] Caregiver render:', {
+        selectedHousehold: caregiverSelectedHouseholdId,
+        activeHouseholdId,
+        'householdIds[0]': householdIds[0],
+        householdId,
+        medsCount: caregiverMeds.length,
+        logsCount: caregiverLogs.length,
+        allMedicinesKeys: Object.keys(allMedicines)
+      });
       
       return (
         <CaregiverDashboard 
@@ -2257,6 +3111,10 @@ const App = () => {
             onDeleteMedicine={handleDeleteMedicine}
             vitalReadings={vitalReadings}
             onAddVital={handleAddVital}
+            doctorAppointments={doctorAppointments}
+            onAddAppointment={handleAddAppointment}
+            onUpdateAppointment={handleUpdateAppointment}
+            onDeleteAppointment={handleDeleteAppointment}
         />
       );
     }
@@ -2265,11 +3123,20 @@ const App = () => {
       return <ProfileView user={currentUser} householdId={householdId} onBack={() => setIsEditingProfile(false)} onSave={(updatedUser) => setCurrentUser(updatedUser)} />;
     }
 
+    // Water Tracker sub-view for Senior
+    if (showWaterTracker) {
+      return (
+        <WaterTrackerView
+          onBack={() => setShowWaterTracker(false)}
+        />
+      );
+    }
+
     switch (activeTab) {
       case 'map':
         const seniorMember = householdMembers.find(m => m.id === currentUser.id);
         const caregiverMembers = householdMembers.filter(m => m.role === UserRole.CAREGIVER);
-        return <LocationView status={seniorStatus} seniorProfile={seniorMember} caregivers={caregiverMembers} />;
+        return <LocationView status={seniorStatus} seniorProfile={seniorMember} caregivers={caregiverMembers} onBack={() => setActiveTab('home')} />;
       case 'voice':
         return (
             <VoiceCompanionView 
@@ -2284,6 +3151,7 @@ const App = () => {
                 medicineLogs={medicineLogs}
                 onMarkTaken={handleMarkTaken}
                 onSkipMedicine={handleSkipMedicine}
+                onSnoozeMedicine={handleSnoozeMedicine}
             />
         );
       case 'vitals':
@@ -2336,6 +3204,12 @@ const App = () => {
               medicineLogs={medicineLogs}
               onMarkTaken={handleMarkTaken}
               onSkipMedicine={handleSkipMedicine}
+              onSnoozeMedicine={handleSnoozeMedicine}
+              onOpenWaterTracker={() => setShowWaterTracker(true)}
+              upcomingAppointments={doctorAppointments.filter(apt => {
+                const aptDate = apt.date instanceof Date ? apt.date : new Date(apt.date);
+                return aptDate >= new Date();
+              })}
             />
         );
     }
@@ -2343,6 +3217,40 @@ const App = () => {
 
   return (
     <div className="min-h-screen w-full bg-white flex flex-col font-sans text-gray-900">
+           {/* Alarm Permission Warning Banner */}
+           {showAlarmPermissionWarning && (
+             <div className="bg-amber-500 text-white px-4 py-3 flex items-center justify-between" style={{ paddingTop: 'max(env(safe-area-inset-top), 12px)' }}>
+               <div className="flex items-center gap-2 flex-1">
+                 <span className="text-xl">⚠️</span>
+                 <div className="text-sm">
+                   <p className="font-semibold">Medicine reminders may not work</p>
+                   <p className="text-xs opacity-90">Tap to enable exact alarms permission</p>
+                 </div>
+               </div>
+               <div className="flex gap-2">
+                 <button
+                   onClick={async () => {
+                     await backgroundReminders.requestExactAlarmPermission();
+                     // Re-check after a delay (user may have enabled it)
+                     setTimeout(async () => {
+                       const canSchedule = await backgroundReminders.canScheduleExactAlarms();
+                       if (canSchedule) setShowAlarmPermissionWarning(false);
+                     }, 1000);
+                   }}
+                   className="bg-white text-amber-600 px-3 py-1 rounded text-sm font-medium"
+                 >
+                   Enable
+                 </button>
+                 <button
+                   onClick={() => setShowAlarmPermissionWarning(false)}
+                   className="text-white/80 hover:text-white px-2"
+                 >
+                   ✕
+                 </button>
+               </div>
+             </div>
+           )}
+
            {/* Scrollable Content Area */}
            <div className="flex-1 flex flex-col overflow-y-auto no-scrollbar relative bg-white pb-24">
               {renderCurrentView()}

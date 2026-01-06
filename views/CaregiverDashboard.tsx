@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Phone, Navigation, Battery, Heart, Layers, Plus, CheckCircle, XCircle, Clock, LogOut, Map as MapIcon, Pill, Activity, Calendar, Bell, Home, Settings, MapPin } from 'lucide-react';
-import { SeniorStatus, ActivityItem, Reminder, HouseholdMember, UserRole, Medicine, MedicineLog, VitalReading } from '../types';
+import { ArrowLeft, Phone, Navigation, Battery, Heart, Layers, Plus, CheckCircle, XCircle, Clock, LogOut, Map as MapIcon, Pill, Activity, Bell, Home, Settings, MapPin, Calendar, Droplets, Shield, Gauge } from 'lucide-react';
+import { SeniorStatus, ActivityItem, Reminder, HouseholdMember, UserRole, Medicine, MedicineLog, VitalReading, DoctorAppointment, Geofence, WaterSettings } from '../types';
 import { BottomNav } from '../components/BottomNav';
 import { MedicineManager } from './MedicineManager';
 import { ComplianceAnalytics } from './ComplianceAnalytics';
 import { CaregiverVitalsView } from './CaregiverVitalsView';
 import { ManualVitalsEntry } from './ManualVitalsEntry';
+import { DoctorAppointmentsView } from './DoctorAppointmentsView';
+import { GeofenceView } from './GeofenceView';
 
 declare var L: any;
 
@@ -30,6 +32,14 @@ interface CaregiverDashboardProps {
   onDeleteMedicine?: (medicineId: string) => void;
   vitalReadings?: VitalReading[];
   onAddVital?: (vital: Omit<VitalReading, 'id' | 'timestamp'>) => void;
+  // Doctor Appointments
+  doctorAppointments?: DoctorAppointment[];
+  onAddAppointment?: (apt: DoctorAppointment) => void;
+  onUpdateAppointment?: (apt: DoctorAppointment) => void;
+  onDeleteAppointment?: (aptId: string) => void;
+  // Water Settings (for senior)
+  waterSettings?: WaterSettings;
+  onUpdateWaterSettings?: (settings: WaterSettings) => void;
 }
 
 export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ 
@@ -52,20 +62,21 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
     onUpdateMedicine,
     onDeleteMedicine,
     vitalReadings = [],
-    onAddVital
+    onAddVital,
+    doctorAppointments = [],
+    onAddAppointment,
+    onUpdateAppointment,
+    onDeleteAppointment,
+    waterSettings,
+    onUpdateWaterSettings
 }) => {
   useEffect(() => {
     console.log('[CaregiverDashboard] onSignOut:', typeof onSignOut);
   }, [onSignOut]);
 
-  const [activeTab, setActiveTab] = useState<'home' | 'map' | 'schedule' | 'medicine' | 'vitals' | 'compliance' | 'settings'>('home');
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<'home' | 'map' | 'medicine' | 'vitals' | 'compliance' | 'settings' | 'appointments' | 'safezone'>('home');
   const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
   const [selectedSeniorId, setSelectedSeniorId] = useState<string | null>(null);
-
-  const [newTitle, setNewTitle] = useState('');
-  const [newTime, setNewTime] = useState('');
-  const [newInstructions, setNewInstructions] = useState('');
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
@@ -77,6 +88,24 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
   const caregiverWatchIdRef = useRef<number | null>(null);
 
   const isEmergency = seniorStatus.status !== 'Normal';
+
+  // Helper to get latest vital reading
+  const getLatestVital = (type: VitalReading['type']) => {
+    const filtered = vitalReadings
+      .filter(v => v.type === type)
+      .sort((a, b) => {
+        const dateA = a.timestamp instanceof Date ? a.timestamp : new Date(a.timestamp);
+        const dateB = b.timestamp instanceof Date ? b.timestamp : new Date(b.timestamp);
+        return dateB.getTime() - dateA.getTime();
+      });
+    return filtered[0];
+  };
+
+  // Get latest vitals for dashboard display
+  const latestHR = getLatestVital('heartRate');
+  const latestSpO2 = getLatestVital('spo2');
+  const latestBP = getLatestVital('bloodPressure');
+  const latestBG = getLatestVital('bloodSugar');
 
   const handleCallSenior = () => {
     if (stopAlert) stopAlert();
@@ -98,26 +127,6 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
     }
     // Open in new tab/window - on mobile this should open the Google Maps app
     window.open(url, '_blank');
-  };
-
-  const submitReminder = (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!newTitle || !newTime) return;
-
-      const newReminder: Reminder = {
-          id: Date.now().toString(),
-          title: newTitle,
-          time: newTime,
-          instructions: newInstructions || 'No instructions',
-          type: 'MEDICATION',
-          status: 'PENDING'
-      };
-      
-      onAddReminder(newReminder);
-      setShowAddModal(false);
-      setNewTitle('');
-      setNewTime('');
-      setNewInstructions('');
   };
 
   // --- MAP INIT LOGIC (Existing) ---
@@ -365,7 +374,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 relative pb-24 w-full">
+    <div className="flex flex-col h-screen bg-gray-50 relative pb-24 w-full pt-[max(env(safe-area-inset-top),28px)]">
       
       {/* Header */}
             <div className={`shadow-sm px-4 py-4 flex items-center justify-between z-[50] bg-white flex-shrink-0`}>
@@ -435,10 +444,16 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                 <div className="bg-gradient-to-br from-red-50 to-white rounded-2xl p-5 shadow-sm border border-red-100">
                   <div className="flex items-center justify-between mb-3">
                     <Heart size={24} className="text-red-500" />
-                    <span className={`w-2 h-2 rounded-full ${seniorStatus?.heartRate > 100 ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}></span>
+                    <span className={`w-2 h-2 rounded-full ${
+                      latestHR && (latestHR.value as number) > 100 ? 'bg-red-500 animate-pulse' : 
+                      latestHR && (latestHR.value as number) < 60 ? 'bg-yellow-500 animate-pulse' : 
+                      'bg-green-500'
+                    }`}></span>
                   </div>
                   <p className="text-sm font-semibold text-gray-600 mb-1">Heart Rate</p>
-                  <p className="text-3xl font-bold text-gray-900">{seniorStatus?.heartRate || '--'}</p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {latestHR ? Math.round(latestHR.value as number) : '--'}
+                  </p>
                   <p className="text-xs text-gray-500 mt-1">bpm</p>
                 </div>
 
@@ -446,26 +461,58 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                 <div className="bg-gradient-to-br from-blue-50 to-white rounded-2xl p-5 shadow-sm border border-blue-100">
                   <div className="flex items-center justify-between mb-3">
                     <Activity size={24} className="text-blue-500" />
-                    <span className={`w-2 h-2 rounded-full ${seniorStatus?.spo2 < 95 ? 'bg-orange-500 animate-pulse' : 'bg-green-500'}`}></span>
+                    <span className={`w-2 h-2 rounded-full ${
+                      latestSpO2 && (latestSpO2.value as number) < 95 ? 'bg-red-500 animate-pulse' : 
+                      latestSpO2 && (latestSpO2.value as number) < 97 ? 'bg-yellow-500 animate-pulse' : 
+                      'bg-green-500'
+                    }`}></span>
                   </div>
                   <p className="text-sm font-semibold text-gray-600 mb-1">Oxygen</p>
-                  <p className="text-3xl font-bold text-gray-900">{seniorStatus?.spo2 || '--'}</p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {latestSpO2 ? Math.round(latestSpO2.value as number) : '--'}
+                  </p>
                   <p className="text-xs text-gray-500 mt-1">SpO₂ %</p>
                 </div>
 
-                {/* Battery Card */}
-                <div className="bg-gradient-to-br from-green-50 to-white rounded-2xl p-5 shadow-sm border border-green-100">
+                {/* Blood Pressure Card */}
+                <div className="bg-gradient-to-br from-orange-50 to-white rounded-2xl p-5 shadow-sm border border-orange-100">
                   <div className="flex items-center justify-between mb-3">
-                    <Battery size={24} className="text-green-500" />
-                    <span className={`w-2 h-2 rounded-full ${seniorStatus?.batteryLevel < 20 ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}></span>
+                    <Gauge size={24} className="text-orange-500" />
+                    <span className={`w-2 h-2 rounded-full ${
+                      latestBP && (latestBP.value as {systolic: number}).systolic > 140 ? 'bg-red-500 animate-pulse' : 
+                      latestBP && (latestBP.value as {systolic: number}).systolic > 130 ? 'bg-yellow-500 animate-pulse' : 
+                      'bg-green-500'
+                    }`}></span>
                   </div>
-                  <p className="text-sm font-semibold text-gray-600 mb-1">Battery</p>
-                  <p className="text-3xl font-bold text-gray-900">{seniorStatus?.batteryLevel || '--'}</p>
-                  <p className="text-xs text-gray-500 mt-1">percent</p>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Blood Pressure</p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {latestBP 
+                      ? `${(latestBP.value as {systolic: number; diastolic: number}).systolic}/${(latestBP.value as {systolic: number; diastolic: number}).diastolic}` 
+                      : '--/--'}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">mmHg</p>
+                </div>
+
+                {/* Blood Sugar Card */}
+                <div className="bg-gradient-to-br from-pink-50 to-white rounded-2xl p-5 shadow-sm border border-pink-100">
+                  <div className="flex items-center justify-between mb-3">
+                    <Droplets size={24} className="text-pink-500" />
+                    <span className={`w-2 h-2 rounded-full ${
+                      latestBG && (latestBG.value as number) > 180 ? 'bg-red-500 animate-pulse' : 
+                      latestBG && (latestBG.value as number) < 70 ? 'bg-red-500 animate-pulse' : 
+                      latestBG && (latestBG.value as number) > 140 ? 'bg-yellow-500 animate-pulse' : 
+                      'bg-green-500'
+                    }`}></span>
+                  </div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Blood Sugar</p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {latestBG ? Math.round(latestBG.value as number) : '--'}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">mg/dL</p>
                 </div>
 
                 {/* Status Card */}
-                <div className={`bg-gradient-to-br ${isEmergency ? 'from-red-50 to-white border-red-100' : 'from-emerald-50 to-white border-emerald-100'} rounded-2xl p-5 shadow-sm border`}>
+                <div className={`bg-gradient-to-br ${isEmergency ? 'from-red-50 to-white border-red-100' : 'from-emerald-50 to-white border-emerald-100'} rounded-2xl p-5 shadow-sm border col-span-2`}>
                   <div className="flex items-center justify-between mb-3">
                     <CheckCircle size={24} className={isEmergency ? 'text-red-500' : 'text-emerald-500'} />
                     <span className={`w-2 h-2 rounded-full ${isEmergency ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`}></span>
@@ -517,24 +564,42 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                   </button>
                 )}
                 <button 
-                  onClick={() => setActiveTab('schedule')}
+                  onClick={() => setActiveTab('medicine')}
                   className="p-4 bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-xl font-semibold hover:from-purple-600 hover:to-purple-700 transition-all flex items-center justify-center gap-2 shadow-md"
                 >
-                  <Calendar size={20} />
-                  Schedule
+                  <Pill size={20} />
+                  Medicines
                 </button>
                 <button 
-                  onClick={() => setActiveTab('map')}
+                  onClick={() => setActiveTab('appointments')}
+                  className="p-4 bg-gradient-to-br from-teal-500 to-teal-600 text-white rounded-xl font-semibold hover:from-teal-600 hover:to-teal-700 transition-all flex items-center justify-center gap-2 shadow-md"
+                >
+                  <Calendar size={20} />
+                  Appointments
+                </button>
+                <button 
+                  onClick={() => setActiveTab('safezone')}
                   className="p-4 bg-gradient-to-br from-green-500 to-green-600 text-white rounded-xl font-semibold hover:from-green-600 hover:to-green-700 transition-all flex items-center justify-center gap-2 shadow-md"
                 >
-                  <MapIcon size={20} />
-                  Track
+                  <Shield size={20} />
+                  Safe Zone
+                </button>
+              </div>
+              
+              {/* Secondary Actions */}
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                <button 
+                  onClick={() => setActiveTab('map')}
+                  className="p-3 bg-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-200 transition-all flex items-center justify-center gap-2"
+                >
+                  <MapIcon size={18} />
+                  Track Location
                 </button>
                 <button 
                   onClick={() => setActiveTab('settings')}
-                  className="p-4 bg-gradient-to-br from-gray-500 to-gray-600 text-white rounded-xl font-semibold hover:from-gray-600 hover:to-gray-700 transition-all flex items-center justify-center gap-2 shadow-md"
+                  className="p-3 bg-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-200 transition-all flex items-center justify-center gap-2"
                 >
-                  <Settings size={20} />
+                  <Settings size={18} />
                   Settings
                 </button>
               </div>
@@ -549,7 +614,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                     Today's Medications
                   </h3>
                   <button 
-                    onClick={() => setActiveTab('schedule')}
+                    onClick={() => setActiveTab('medicine')}
                     className="text-sm text-blue-600 font-semibold hover:text-blue-700"
                   >
                     View All
@@ -560,7 +625,7 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                   {medicines.slice(0, 4).map((medicine) => {
                     const today = new Date().toDateString();
                     return medicine.times.map((time, timeIndex) => {
-                      // Check if this medicine dose was taken/skipped today
+                      // Check if this medicine dose was taken/skipped/snoozed today
                       const log = medicineLogs.find(
                         (l) => l.medicineId === medicine.id && 
                                l.date.toDateString() === today && 
@@ -568,21 +633,41 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                       );
                       const status = log?.status || 'PENDING';
                       
+                      // Check if overdue (past scheduled time and still pending)
+                      const now = new Date();
+                      const [hours, mins] = time.split(':').map(Number);
+                      const scheduledTime = new Date();
+                      scheduledTime.setHours(hours, mins, 0, 0);
+                      const isPastTime = now > scheduledTime;
+                      const isOverdue = status === 'PENDING' && isPastTime;
+                      
                       return (
-                        <div key={`${medicine.id}-${time}`} className="flex items-center gap-4 p-4 bg-gradient-to-r from-purple-50 to-transparent rounded-xl border border-purple-100">
-                          <div className="flex-shrink-0 w-16 h-16 bg-purple-100 rounded-xl flex flex-col items-center justify-center">
-                            <p className="text-lg font-bold text-purple-600">{time.split(':')[0]}</p>
-                            <p className="text-xs text-purple-600">{time.split(':')[1]}</p>
+                        <div key={`${medicine.id}-${time}`} className={`flex items-center gap-4 p-4 rounded-xl border ${
+                          status === 'MISSED' || isOverdue 
+                            ? 'bg-gradient-to-r from-red-50 to-transparent border-red-100' 
+                            : status === 'SNOOZED' 
+                              ? 'bg-gradient-to-r from-purple-50 to-transparent border-purple-200'
+                              : 'bg-gradient-to-r from-purple-50 to-transparent border-purple-100'
+                        }`}>
+                          <div className={`flex-shrink-0 w-16 h-16 rounded-xl flex flex-col items-center justify-center ${
+                            status === 'MISSED' || isOverdue ? 'bg-red-100' : 'bg-purple-100'
+                          }`}>
+                            <p className={`text-lg font-bold ${status === 'MISSED' || isOverdue ? 'text-red-600' : 'text-purple-600'}`}>{time.split(':')[0]}</p>
+                            <p className={`text-xs ${status === 'MISSED' || isOverdue ? 'text-red-600' : 'text-purple-600'}`}>{time.split(':')[1]}</p>
                           </div>
                           <div className="flex-1">
                             <p className="font-bold text-gray-900">{medicine.name}</p>
                             <p className="text-xs text-gray-500 mt-0.5">{medicine.dosage}</p>
+                            {medicine.isCritical && (
+                              <span className="inline-block mt-1 px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full">Critical</span>
+                            )}
                           </div>
                           <div>
                             {status === 'TAKEN' && (
                               <div className="flex flex-col items-center gap-1">
                                 <CheckCircle size={24} className="text-green-500" />
                                 <span className="text-[10px] font-bold text-green-600">Taken</span>
+                                {log?.actualTime && <span className="text-[9px] text-gray-500">{log.actualTime}</span>}
                               </div>
                             )}
                             {status === 'SKIPPED' && (
@@ -591,10 +676,29 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
                                 <span className="text-[10px] font-bold text-orange-600">Skipped</span>
                               </div>
                             )}
-                            {status === 'PENDING' && (
+                            {status === 'MISSED' && (
+                              <div className="flex flex-col items-center gap-1">
+                                <XCircle size={24} className="text-red-500" />
+                                <span className="text-[10px] font-bold text-red-600">Missed</span>
+                              </div>
+                            )}
+                            {status === 'SNOOZED' && (
+                              <div className="flex flex-col items-center gap-1">
+                                <Bell size={24} className="text-purple-500 animate-pulse" />
+                                <span className="text-[10px] font-bold text-purple-600">Snoozed</span>
+                                {log?.snoozedUntil && <span className="text-[9px] text-gray-500">{log.snoozedUntil}</span>}
+                              </div>
+                            )}
+                            {status === 'PENDING' && !isOverdue && (
                               <div className="flex flex-col items-center gap-1">
                                 <Clock size={24} className="text-gray-400" />
                                 <span className="text-[10px] font-bold text-gray-500">Pending</span>
+                              </div>
+                            )}
+                            {isOverdue && (
+                              <div className="flex flex-col items-center gap-1">
+                                <Clock size={24} className="text-red-500 animate-pulse" />
+                                <span className="text-[10px] font-bold text-red-600">Overdue!</span>
                               </div>
                             )}
                           </div>
@@ -737,99 +841,6 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
           </div>
       )}
 
-      {/* CONTENT: SCHEDULE VIEW */}
-      {activeTab === 'schedule' && (
-          <div className="flex-1 p-6 overflow-y-auto">
-             <div className="flex justify-between items-center mb-6">
-                 <h2 className="text-2xl font-bold text-gray-900">Medication Schedule</h2>
-                 <button 
-                    onClick={() => setShowAddModal(true)}
-                    className="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-700 transition-colors"
-                 >
-                     <Plus size={24} />
-                 </button>
-             </div>
-
-             <div className="space-y-4">
-                 {reminders.length === 0 && <p className="text-gray-400 text-center py-8">No medications scheduled.</p>}
-                 
-                 {reminders.map((reminder) => (
-                     <div key={reminder.id} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
-                         <div className="flex items-start gap-4">
-                             <div className="text-lg font-bold text-blue-600 mt-1">{reminder.time}</div>
-                             <div>
-                                 <h3 className="font-bold text-gray-900">{reminder.title}</h3>
-                                 <p className="text-xs text-gray-500">{reminder.instructions}</p>
-                             </div>
-                         </div>
-                         <div>
-                             {reminder.status === 'COMPLETED' && <div className="text-green-500 flex flex-col items-center"><CheckCircle size={20} /><span className="text-[10px] font-bold">Taken</span></div>}
-                             {reminder.status === 'PENDING' && <div className="text-gray-300 flex flex-col items-center"><Clock size={20} /><span className="text-[10px] font-bold">Pending</span></div>}
-                             {reminder.status === 'SNOOZED' && <div className="text-orange-400 flex flex-col items-center"><Clock size={20} /><span className="text-[10px] font-bold">Snoozed</span></div>}
-                         </div>
-                     </div>
-                 ))}
-             </div>
-          </div>
-      )}
-
-      {/* ADD MEDICATION MODAL */}
-      {showAddModal && (
-          <div className="absolute inset-0 bg-black/50 z-[100] flex items-end sm:items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
-              <div className="bg-white w-full max-w-sm rounded-2xl p-6 shadow-2xl">
-                  <h3 className="text-xl font-bold mb-4">Add Medication</h3>
-                  <form onSubmit={submitReminder} className="space-y-4">
-                      <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Medicine Name</label>
-                          <input 
-                            type="text" 
-                            className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 font-semibold"
-                            placeholder="e.g., Lisinopril"
-                            value={newTitle}
-                            onChange={(e) => setNewTitle(e.target.value)}
-                            required
-                          />
-                      </div>
-                      <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Time</label>
-                          <input 
-                            type="time" 
-                            className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 font-semibold"
-                            value={newTime}
-                            onChange={(e) => setNewTime(e.target.value)}
-                            required
-                          />
-                      </div>
-                      <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Instructions (Optional)</label>
-                          <input 
-                            type="text" 
-                            className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm"
-                            placeholder="e.g., Take with food"
-                            value={newInstructions}
-                            onChange={(e) => setNewInstructions(e.target.value)}
-                          />
-                      </div>
-                      <div className="flex gap-3 pt-2">
-                          <button 
-                            type="button" 
-                            onClick={() => setShowAddModal(false)}
-                            className="flex-1 bg-gray-100 text-gray-700 font-bold py-3 rounded-xl"
-                          >
-                              Cancel
-                          </button>
-                          <button 
-                            type="submit" 
-                            className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl"
-                          >
-                              Save Schedule
-                          </button>
-                      </div>
-                  </form>
-              </div>
-          </div>
-      )}
-
       {/* CONTENT: MEDICINE MANAGER */}
       {activeTab === 'medicine' && (
           <div className="flex-1 overflow-y-auto">
@@ -858,6 +869,25 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({
             medicines={medicines}
             medicineLogs={medicineLogs}
             vitalReadings={vitalReadings || []}
+          />
+      )}
+
+      {/* CONTENT: DOCTOR APPOINTMENTS */}
+      {activeTab === 'appointments' && (
+          <DoctorAppointmentsView 
+            appointments={doctorAppointments}
+            onAddAppointment={onAddAppointment || (() => {})}
+            onUpdateAppointment={onUpdateAppointment || (() => {})}
+            onDeleteAppointment={onDeleteAppointment || (() => {})}
+            onBack={() => setActiveTab('home')}
+          />
+      )}
+
+      {/* CONTENT: SAFE ZONE / GEOFENCE */}
+      {activeTab === 'safezone' && householdId && (
+          <GeofenceView 
+            householdId={householdId}
+            onBack={() => setActiveTab('home')}
           />
       )}
 

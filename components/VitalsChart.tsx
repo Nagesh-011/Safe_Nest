@@ -79,24 +79,39 @@ export const VitalsChart: React.FC<VitalsChartProps> = ({
   });
 
   // Add padding to min/max
-  const padding = (maxValue - minValue) * 0.2;
+  const padding = (maxValue - minValue) * 0.2 || 10; // Fallback padding if range is 0
   minValue = Math.max(0, minValue - padding);
   maxValue = maxValue + padding;
+
+  // Ensure we have a valid range (avoid division by zero)
+  const valueRange = maxValue - minValue;
+  if (valueRange <= 0 || !isFinite(valueRange)) {
+    return (
+      <div className="bg-gray-50 rounded-xl p-8 text-center border border-gray-200">
+        <p className="text-gray-500 font-semibold">Not enough data to display chart</p>
+        <p className="text-sm text-gray-400 mt-1">Add more readings to see trends</p>
+      </div>
+    );
+  }
 
   // Chart dimensions
   const width = 100; // percentage
   const height = 200; // pixels
-  const pointCount = filteredData.length;
+  const pointCount = Math.max(filteredData.length, 2); // Ensure at least 2 to avoid division by zero
 
   // Generate SVG path for line chart
   const generatePath = (dataPoints: number[]) => {
     if (dataPoints.length === 0) return '';
 
     const points = dataPoints.map((value, index) => {
-      const x = (index / (pointCount - 1)) * 100;
-      const y = ((maxValue - value) / (maxValue - minValue)) * 100;
+      const x = dataPoints.length === 1 ? 50 : (index / (pointCount - 1)) * 100;
+      const y = Math.max(0, Math.min(100, ((maxValue - value) / valueRange) * 100));
+      // Ensure valid numbers
+      if (!isFinite(x) || !isFinite(y)) return '50,50';
       return `${x},${y}`;
     });
+
+    return `M ${points.join(' L ')}`;
 
     return `M ${points.join(' L ')}`;
   };
@@ -148,40 +163,62 @@ export const VitalsChart: React.FC<VitalsChartProps> = ({
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
           className="w-full h-full"
-          style={{ overflow: 'visible' }}
+          style={{ overflow: 'hidden' }}
         >
-          {/* Threshold zones (background) */}
-          {showThresholds && (
-            <>
-              {/* Danger zone (high) */}
-              <rect
-                x="0"
-                y="0"
-                width="100"
-                height={((maxValue - thresholds.max) / (maxValue - minValue)) * 100}
-                fill="#fee2e2"
-                opacity="0.5"
-              />
-              {/* Warning zone */}
-              <rect
-                x="0"
-                y={((maxValue - thresholds.max) / (maxValue - minValue)) * 100}
-                width="100"
-                height={((thresholds.max - thresholds.high) / (maxValue - minValue)) * 100}
-                fill="#fef3c7"
-                opacity="0.5"
-              />
-              {/* Normal zone */}
-              <rect
-                x="0"
-                y={((maxValue - thresholds.high) / (maxValue - minValue)) * 100}
-                width="100"
-                height={((thresholds.high - thresholds.low) / (maxValue - minValue)) * 100}
-                fill="#d1fae5"
-                opacity="0.5"
-              />
-            </>
-          )}
+          {/* Threshold zones (background) - clipped to visible range */}
+          {showThresholds && (() => {
+            // Calculate visible zone boundaries, clipped to chart area
+            const getY = (val: number) => Math.max(0, Math.min(100, ((maxValue - val) / valueRange) * 100));
+            
+            // Only show zones that intersect with the visible range
+            const zones = [];
+            
+            // Danger zone (above max threshold)
+            if (maxValue > thresholds.max) {
+              const y1 = 0;
+              const y2 = getY(thresholds.max);
+              if (y2 > y1) {
+                zones.push(
+                  <rect key="danger" x="0" y={y1} width="100" height={y2 - y1} fill="#fee2e2" opacity="0.5" />
+                );
+              }
+            }
+            
+            // High/Warning zone (between high and max)
+            if (maxValue > thresholds.high && minValue < thresholds.max) {
+              const y1 = getY(Math.min(maxValue, thresholds.max));
+              const y2 = getY(Math.max(minValue, thresholds.high));
+              if (y2 > y1) {
+                zones.push(
+                  <rect key="warning" x="0" y={y1} width="100" height={y2 - y1} fill="#fef3c7" opacity="0.5" />
+                );
+              }
+            }
+            
+            // Normal zone (between low and high)
+            if (maxValue > thresholds.low && minValue < thresholds.high) {
+              const y1 = getY(Math.min(maxValue, thresholds.high));
+              const y2 = getY(Math.max(minValue, thresholds.low));
+              if (y2 > y1) {
+                zones.push(
+                  <rect key="normal" x="0" y={y1} width="100" height={y2 - y1} fill="#d1fae5" opacity="0.5" />
+                );
+              }
+            }
+            
+            // Low zone (below low threshold)
+            if (minValue < thresholds.low) {
+              const y1 = getY(Math.min(maxValue, thresholds.low));
+              const y2 = 100;
+              if (y2 > y1) {
+                zones.push(
+                  <rect key="low" x="0" y={y1} width="100" height={y2 - y1} fill="#dbeafe" opacity="0.5" />
+                );
+              }
+            }
+            
+            return zones;
+          })()}
 
           {/* Grid lines */}
           {[0, 25, 50, 75, 100].map((y) => (
@@ -223,8 +260,9 @@ export const VitalsChart: React.FC<VitalsChartProps> = ({
 
           {/* Data points */}
           {sysValues.map((value, index) => {
-            const x = (index / (pointCount - 1)) * 100;
-            const y = ((maxValue - value) / (maxValue - minValue)) * 100;
+            const x = sysValues.length === 1 ? 50 : (index / (pointCount - 1)) * 100;
+            const y = Math.max(0, Math.min(100, ((maxValue - value) / valueRange) * 100));
+            if (!isFinite(x) || !isFinite(y)) return null;
             return (
               <circle
                 key={`sys-${index}`}
@@ -239,8 +277,9 @@ export const VitalsChart: React.FC<VitalsChartProps> = ({
 
           {type === 'bloodPressure' &&
             diaValues.map((value, index) => {
-              const x = (index / (pointCount - 1)) * 100;
-              const y = ((maxValue - value) / (maxValue - minValue)) * 100;
+              const x = diaValues.length === 1 ? 50 : (index / (pointCount - 1)) * 100;
+              const y = Math.max(0, Math.min(100, ((maxValue - value) / valueRange) * 100));
+              if (!isFinite(x) || !isFinite(y)) return null;
               return (
                 <circle
                   key={`dia-${index}`}

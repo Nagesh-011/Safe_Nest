@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Edit2, Trash2, Calendar, Clock, Pill, AlertCircle, CheckCircle, X } from 'lucide-react';
+import { Plus, Edit2, Trash2, Calendar, Clock, Pill, AlertCircle, CheckCircle, X, Bell, RefreshCw } from 'lucide-react';
 import { Medicine, MedicineLog } from '../types';
 
 // Convert time string to minutes since midnight for comparison
@@ -69,6 +69,11 @@ export const MedicineManager: React.FC<MedicineManagerProps> = ({
     instructions: '',
     doctorName: '',
     notes: '',
+    totalQuantity: undefined,
+    remainingQuantity: undefined,
+    refillAlertThreshold: 7,
+    voiceReminderEnabled: true,
+    isCritical: false,
   });
 
   const timeOptions = [
@@ -104,6 +109,17 @@ export const MedicineManager: React.FC<MedicineManagerProps> = ({
     if (!formData.name?.trim()) {
       alert('Please enter medicine name');
       return;
+    }
+
+    // Check for duplicate medicine name (case insensitive)
+    const duplicateMed = medicines.find(
+      (m) => m.name.toLowerCase().trim() === formData.name?.toLowerCase().trim() && m.id !== editingId
+    );
+    if (duplicateMed) {
+      const proceed = confirm(
+        `A medicine named "${duplicateMed.name}" already exists (${duplicateMed.dosage}, ${duplicateMed.times.join(', ')}).\n\nAre you sure you want to add another one?`
+      );
+      if (!proceed) return;
     }
 
     // Validate: check for duplicate times within this medicine
@@ -148,6 +164,11 @@ export const MedicineManager: React.FC<MedicineManagerProps> = ({
       instructions: formData.instructions || '',
       doctorName: formData.doctorName,
       notes: formData.notes,
+      totalQuantity: formData.totalQuantity,
+      remainingQuantity: formData.remainingQuantity ?? formData.totalQuantity,
+      refillAlertThreshold: formData.refillAlertThreshold || 7,
+      voiceReminderEnabled: formData.voiceReminderEnabled ?? true,
+      isCritical: formData.isCritical ?? false,
       createdAt: editingId ? new Date(formData.createdAt!) : new Date(),
       updatedAt: new Date(),
     };
@@ -173,6 +194,11 @@ export const MedicineManager: React.FC<MedicineManagerProps> = ({
       instructions: '',
       doctorName: '',
       notes: '',
+      totalQuantity: undefined,
+      remainingQuantity: undefined,
+      refillAlertThreshold: 7,
+      voiceReminderEnabled: true,
+      isCritical: false,
     });
     setShowForm(false);
     setEditingId(null);
@@ -182,6 +208,18 @@ export const MedicineManager: React.FC<MedicineManagerProps> = ({
     setFormData(medicine);
     setEditingId(medicine.id);
     setShowForm(true);
+  };
+
+  // Calculate refill status
+  const getRefillStatus = (medicine: Medicine) => {
+    if (!medicine.totalQuantity || !medicine.remainingQuantity) return null;
+    
+    const threshold = medicine.refillAlertThreshold || 7;
+    const daysLeft = Math.floor(medicine.remainingQuantity / medicine.frequency);
+    
+    if (daysLeft <= 0) return { level: 'critical', text: 'Out of stock!', daysLeft: 0 };
+    if (daysLeft <= threshold) return { level: 'warning', text: `${daysLeft} days supply left`, daysLeft };
+    return { level: 'ok', text: `${daysLeft} days supply`, daysLeft };
   };
 
   const daysRemaining = (medicine: Medicine) => {
@@ -361,6 +399,85 @@ export const MedicineManager: React.FC<MedicineManagerProps> = ({
               />
             </div>
 
+            {/* Refill Tracking Section */}
+            <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+              <h4 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Pill size={18} className="text-blue-600" />
+                Refill Tracking (Optional)
+              </h4>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Total Quantity</label>
+                  <input
+                    type="number"
+                    value={formData.totalQuantity || ''}
+                    onChange={(e) => setFormData({ ...formData, totalQuantity: parseInt(e.target.value) || undefined })}
+                    placeholder="30 pills"
+                    min={1}
+                    className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Remaining</label>
+                  <input
+                    type="number"
+                    value={formData.remainingQuantity ?? formData.totalQuantity ?? ''}
+                    onChange={(e) => setFormData({ ...formData, remainingQuantity: parseInt(e.target.value) || undefined })}
+                    placeholder="30"
+                    min={0}
+                    className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                  />
+                </div>
+              </div>
+              <div className="mt-3">
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Alert when less than (days supply)</label>
+                <input
+                  type="number"
+                  value={formData.refillAlertThreshold || 7}
+                  onChange={(e) => setFormData({ ...formData, refillAlertThreshold: parseInt(e.target.value) || 7 })}
+                  min={1}
+                  max={30}
+                  className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                />
+              </div>
+            </div>
+
+            {/* Options Section */}
+            <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+              <h4 className="font-bold text-gray-900 mb-3">Reminder Options</h4>
+              <div className="space-y-3">
+                {/* Critical Medicine Toggle */}
+                <label className="flex items-center justify-between cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={18} className="text-red-500" />
+                    <span className="text-sm font-medium text-gray-700">Critical Medicine</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={formData.isCritical || false}
+                    onChange={(e) => setFormData({ ...formData, isCritical: e.target.checked })}
+                    className="w-5 h-5 text-red-600 rounded border-gray-300 focus:ring-red-500"
+                  />
+                </label>
+                <p className="text-xs text-gray-500 ml-6">Missing this medicine will trigger a louder alert</p>
+
+                {/* Voice Reminder Toggle */}
+                <label className="flex items-center justify-between cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <Bell size={18} className="text-blue-500" />
+                    <span className="text-sm font-medium text-gray-700">Voice Reminder</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={formData.voiceReminderEnabled ?? true}
+                    onChange={(e) => setFormData({ ...formData, voiceReminderEnabled: e.target.checked })}
+                    className="w-5 h-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                  />
+                </label>
+                <p className="text-xs text-gray-500 ml-6">Speak medicine name when reminder appears</p>
+              </div>
+            </div>
+
             {/* Submit Button */}
             <div className="flex gap-3 pt-4">
               <button
@@ -435,6 +552,74 @@ export const MedicineManager: React.FC<MedicineManagerProps> = ({
                       {medicine.times.join(', ')}
                     </span>
                   </div>
+
+                  {/* Badges Row */}
+                  <div className="flex gap-2 flex-wrap mb-2">
+                    {medicine.isCritical && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">
+                        <AlertCircle size={12} />
+                        Critical
+                      </span>
+                    )}
+                    {medicine.voiceReminderEnabled && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-bold rounded-full">
+                        <Bell size={12} />
+                        Voice
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Refill Alert */}
+                  {(() => {
+                    const refillStatus = getRefillStatus(medicine);
+                    if (!refillStatus) return null;
+                    
+                    return (
+                      <div className={`flex items-center justify-between gap-2 p-2 rounded-lg mb-2 ${
+                        refillStatus.level === 'critical' 
+                          ? 'bg-red-100 border border-red-200' 
+                          : refillStatus.level === 'warning'
+                            ? 'bg-yellow-100 border border-yellow-200'
+                            : 'bg-green-50 border border-green-100'
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          <Pill size={14} className={
+                            refillStatus.level === 'critical' 
+                              ? 'text-red-600' 
+                              : refillStatus.level === 'warning'
+                                ? 'text-yellow-600'
+                                : 'text-green-600'
+                          } />
+                          <span className={`text-xs font-bold ${
+                            refillStatus.level === 'critical' 
+                              ? 'text-red-700' 
+                              : refillStatus.level === 'warning'
+                                ? 'text-yellow-700'
+                                : 'text-green-700'
+                          }`}>
+                            {refillStatus.text}
+                            {refillStatus.level !== 'ok' && ' - Order refill!'}
+                          </span>
+                        </div>
+                        {medicine.totalQuantity && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              // Refill: reset remaining to total
+                              onUpdateMedicine({
+                                ...medicine,
+                                remainingQuantity: medicine.totalQuantity
+                              });
+                            }}
+                            className="flex items-center gap-1 px-2 py-1 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors"
+                          >
+                            <RefreshCw size={12} />
+                            Refill
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Duration */}
                   <div className="flex items-center gap-2 text-sm text-gray-600">

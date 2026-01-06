@@ -60,6 +60,54 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_sos_info" />
         </receiver>
+
+        <!-- Medicine Reminder Receiver (AlarmManager) -->
+        <receiver
+            android:name=".reminders.MedicineReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.safenest.MEDICINE_REMINDER" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Medicine Action Receiver (Notification buttons) -->
+        <receiver
+            android:name=".reminders.MedicineActionReceiver"
+            android:exported="false" />
+
+        <!-- Missed Medicine Follow-up and Escalation Receiver -->
+        <receiver
+            android:name=".reminders.MissedMedicineReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.safenest.CHECK_MISSED" />
+                <action android:name="com.safenest.ESCALATE_REMINDER" />
+                <action android:name="com.safenest.MARK_MISSED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Re-schedule reminders after reboot -->
+        <receiver
+            android:name=".reminders.ReminderBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+        
+        <!-- Panic Button Widget -->
+        <receiver
+            android:name=".widget.PanicButtonWidget"
+            android:exported="true"
+            android:label="SafeNest SOS">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_panic_button_info" />
+        </receiver>
     </application>
 
     <!-- Permissions -->
@@ -77,4 +125,8 @@
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- Medicine Reminder Scheduling -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

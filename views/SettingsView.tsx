@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Shield, Navigation, Mic, Activity, LogOut, ChevronRight, Volume2, Globe } from 'lucide-react';
+import { Bell, Shield, Navigation, Mic, Activity, LogOut, ChevronRight, Volume2, Globe, Pill, BatteryCharging } from 'lucide-react';
 import { useLanguage } from '../i18n/LanguageContext';
 import { UserRole } from '../types';
+import { backgroundReminders } from '../services/backgroundReminders';
 
 interface SettingsViewProps {
     onSignOut?: () => void;
@@ -18,6 +19,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSignOut, onJoinAno
 
   const [fallSensitivity, setFallSensitivity] = useState('Medium');
   const [notifications, setNotifications] = useState(true);
+  const [batteryExempted, setBatteryExempted] = useState(false);
+  
+  // Check battery optimization status on mount
+  useEffect(() => {
+    const checkBattery = async () => {
+      if (backgroundReminders.isAvailable()) {
+        const exempted = await backgroundReminders.isBatteryExempted();
+        setBatteryExempted(exempted);
+      }
+    };
+    checkBattery();
+  }, []);
+  
+  const requestBatteryExemption = async () => {
+    if (backgroundReminders.isAvailable()) {
+      try {
+        await backgroundReminders.requestBatteryExemption();
+        // Check again after a delay (user may grant/deny)
+        setTimeout(async () => {
+          try {
+            const exempted = await backgroundReminders.isBatteryExempted();
+            setBatteryExempted(exempted);
+          } catch (e) {
+            console.error('[SettingsView] Failed to check battery status:', e);
+          }
+        }, 1500);
+      } catch (error) {
+        console.error('[SettingsView] Failed to request battery exemption:', error);
+        alert('Could not open battery settings. Please go to Settings > Apps > SafeNest > Battery and select "Unrestricted".');
+      }
+    } else {
+      alert('Battery optimization settings are only available on Android.');
+    }
+  };
 
     // Language selection limited to English, Hindi, Marathi
   
@@ -146,6 +181,51 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSignOut, onJoinAno
                         <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${notifications ? 'right-1' : 'left-1'}`}></div>
                     </div>
                 </div>
+                
+                {/* Medicine Reminders Background - Only show on Android */}
+                {backgroundReminders.isAvailable() && (
+                  <>
+                    <div className="p-4 border-t border-gray-100 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-teal-100 p-2 rounded-lg text-teal-600">
+                          <Pill size={20} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900">Medicine Reminders</p>
+                          <p className="text-xs text-gray-500">Alerts work even when app is closed</p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">Active</span>
+                    </div>
+                    
+                    <div className="p-4 border-t border-gray-100">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="bg-amber-100 p-2 rounded-lg text-amber-600">
+                          <BatteryCharging size={20} />
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-semibold text-gray-900">Battery Optimization</p>
+                          <p className="text-xs text-gray-500">
+                            {batteryExempted 
+                              ? '✅ Disabled - Reminders will always work' 
+                              : '⚠️ Enabled - May delay reminders'}
+                          </p>
+                        </div>
+                      </div>
+                      {!batteryExempted && (
+                        <button
+                          onClick={requestBatteryExemption}
+                          className="w-full mt-2 py-2 px-4 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 transition-colors"
+                        >
+                          Disable Battery Optimization
+                        </button>
+                      )}
+                      <p className="text-xs text-gray-500 mt-2">
+                        💡 Disabling battery optimization ensures medicine reminders arrive on time, even when your phone is idle.
+                      </p>
+                    </div>
+                  </>
+                )}
             </div>
         </section>
 

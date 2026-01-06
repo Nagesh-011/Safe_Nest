@@ -10,6 +10,7 @@ import com.getcapacitor.BridgeActivity;
 import com.safenest.app.falldetection.FallDetectionPlugin;
 import com.safenest.app.falldetection.FallDetectionService;
 import com.safenest.app.fit.GoogleFitPlugin;
+import com.safenest.app.reminders.MedicineRemindersPlugin;
 
 public class MainActivity extends BridgeActivity {
 	private static final String TAG = "MainActivity";
@@ -22,6 +23,7 @@ public class MainActivity extends BridgeActivity {
 		Log.d(TAG, "MainActivity onCreate");
 		registerPlugin(FallDetectionPlugin.class);
 		registerPlugin(GoogleFitPlugin.class);
+		registerPlugin(MedicineRemindersPlugin.class);
 		
 		// Check if launched from fall detection
 		handleFallDetectionIntent(getIntent());

@@ -23,7 +23,7 @@ export const VitalsView: React.FC<VitalsViewProps> = ({
   const [showVitalsEntry, setShowVitalsEntry] = useState(false);
 
   // Get latest manual vitals
-  const getLatestVital = (type: 'bloodPressure' | 'temperature' | 'weight' | 'bloodSugar') => {
+  const getLatestVital = (type: 'bloodPressure' | 'temperature' | 'weight' | 'bloodSugar' | 'heartRate' | 'spo2') => {
     const filtered = vitalReadings
       .filter(v => v.type === type && v.source === 'manual')
       .sort((a, b) => {
@@ -38,6 +38,8 @@ export const VitalsView: React.FC<VitalsViewProps> = ({
   const latestTemp = getLatestVital('temperature');
   const latestWeight = getLatestVital('weight');
   const latestBG = getLatestVital('bloodSugar');
+  const latestHR = getLatestVital('heartRate');
+  const latestSpO2 = getLatestVital('spo2');
 
   const formatTimestamp = (timestamp: Date | string) => {
     const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
@@ -224,6 +226,66 @@ export const VitalsView: React.FC<VitalsViewProps> = ({
             <div className="flex items-end gap-2 mb-2">
                 <span className="text-5xl font-black text-gray-900">{Math.round(latestBG.value as number)}</span>
                 <span className="text-gray-500 font-bold mb-1">mg/dL</span>
+            </div>
+        </div>
+      )}
+
+      {/* Manual Heart Rate Card */}
+      {latestHR && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center">
+                        <Activity className="text-red-500" size={24} />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-gray-900 text-lg">Heart Rate (Manual)</h3>
+                        <p className="text-gray-500 text-sm">{formatTimestamp(latestHR.timestamp)}</p>
+                    </div>
+                </div>
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                  (latestHR.value as number) > 100 || (latestHR.value as number) < 60
+                    ? 'bg-yellow-100 text-yellow-700' 
+                    : 'bg-green-100 text-green-700'
+                }`}>
+                    {(latestHR.value as number) > 100 ? 'High' : (latestHR.value as number) < 60 ? 'Low' : 'Normal'}
+                </span>
+            </div>
+
+            <div className="flex items-end gap-2 mb-2">
+                <span className="text-5xl font-black text-gray-900">{Math.round(latestHR.value as number)}</span>
+                <span className="text-gray-500 font-bold mb-1">BPM</span>
+            </div>
+        </div>
+      )}
+
+      {/* Manual SpO2 Card */}
+      {latestSpO2 && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-cyan-50 rounded-full flex items-center justify-center">
+                        <Droplet className="text-cyan-500" size={24} fill="currentColor" />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-gray-900 text-lg">SpO2 (Manual)</h3>
+                        <p className="text-gray-500 text-sm">{formatTimestamp(latestSpO2.timestamp)}</p>
+                    </div>
+                </div>
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                  (latestSpO2.value as number) < 95
+                    ? 'bg-red-100 text-red-700' 
+                    : (latestSpO2.value as number) < 97
+                    ? 'bg-yellow-100 text-yellow-700'
+                    : 'bg-green-100 text-green-700'
+                }`}>
+                    {(latestSpO2.value as number) < 95 ? 'Low' : (latestSpO2.value as number) < 97 ? 'Borderline' : 'Normal'}
+                </span>
+            </div>
+
+            <div className="flex items-end gap-2 mb-2">
+                <span className="text-5xl font-black text-gray-900">{Math.round(latestSpO2.value as number)}</span>
+                <span className="text-gray-500 font-bold mb-1">%</span>
             </div>
         </div>
       )}

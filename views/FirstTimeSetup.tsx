@@ -16,11 +16,12 @@ interface FirstTimeSetupProps {
   existingProfile?: UserProfile; // User's existing profile when joining another household
   existingRole?: UserRole; // User's existing role
   onCancel?: () => void; // Cancel joining another household
+  startStep?: 'role' | 'choice' | 'profile' | 'rejoin'; // Optional starting step when returning from HouseholdLink
 }
 
-export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRejoinWithCode, onLookupCodeByPhone, onCheckExistingMember, onValidateHousehold, onCheckPhoneUsed, onSearchCaregiverByPhone, rejoinError, isValidatingRejoin, existingProfile, existingRole, onCancel }) => {
-  // If existing user joining another household, skip to rejoin step with their profile
-  const initialStep = (existingProfile && existingRole) ? 'rejoin' : 'role';
+export const FirstTimeSetup: React.FC<FirstTimeSetupProps> = ({ onComplete, onRejoinWithCode, onLookupCodeByPhone, onCheckExistingMember, onValidateHousehold, onCheckPhoneUsed, onSearchCaregiverByPhone, rejoinError, isValidatingRejoin, existingProfile, existingRole, onCancel, startStep }) => {
+  // If startStep is provided, use it. Otherwise, if existing user joining another household, skip to rejoin step
+  const initialStep = startStep || ((existingProfile && existingRole) ? 'rejoin' : 'role');
   const [step, setStep] = useState<'role' | 'choice' | 'profile' | 'rejoin' | 'lookup-caregiver' | 'caregiver-found'>(initialStep);
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(existingRole || null);
   const [householdCode, setHouseholdCode] = useState('');

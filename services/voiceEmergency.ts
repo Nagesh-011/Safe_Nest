@@ -24,6 +24,12 @@ class VoiceEmergencyDetector {
       return true;
     }
 
+    // Check if mediaDevices is available (requires HTTPS or localhost)
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.warn('[VoiceEmergency] getUserMedia not available (requires HTTPS or native app)');
+      return false;
+    }
+
     try {
       // Request microphone permission
       this.stream = await navigator.mediaDevices.getUserMedia({ 

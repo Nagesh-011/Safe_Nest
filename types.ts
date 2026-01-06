@@ -112,6 +112,14 @@ export interface Medicine {
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
+  // NEW: Refill tracking
+  totalQuantity?: number; // Total pills/doses in pack (e.g., 30)
+  remainingQuantity?: number; // Current remaining (auto-decremented)
+  refillAlertThreshold?: number; // Alert when this many left (e.g., 5)
+  // NEW: Voice reminder
+  voiceReminderEnabled?: boolean; // Enable TTS for this medicine
+  // NEW: Critical medicine flag
+  isCritical?: boolean; // If true, escalate missed alerts
 }
 
 export interface MedicineLog {
@@ -121,9 +129,12 @@ export interface MedicineLog {
   dosage: string;
   scheduledTime: string; // Time it was supposed to be taken
   actualTime?: string; // When it was actually taken
-  status: 'PENDING' | 'TAKEN' | 'MISSED' | 'SKIPPED';
+  status: 'PENDING' | 'TAKEN' | 'MISSED' | 'SKIPPED' | 'SNOOZED';
   date: Date;
   notes?: string;
+  // NEW: Snooze tracking
+  snoozedUntil?: string; // Time snoozed until (e.g., "08:15")
+  snoozeCount?: number; // How many times snoozed
 }
 
 export interface MedicineHistory {
@@ -139,6 +150,9 @@ export interface VitalReading {
   id: string;
   type: 'bloodPressure' | 'temperature' | 'weight' | 'bloodSugar' | 'heartRate' | 'spo2' | 'stress';
   value: number | { systolic: number; diastolic: number }; // BP is object, others are numbers
+  unit?: string; // Unit of measurement (e.g., "mmHg", "°F", "mg/dL")
+  systolic?: number; // For blood pressure readings
+  diastolic?: number; // For blood pressure readings
   timestamp: Date;
   source: 'smartwatch' | 'manual'; // Where data came from
   enteredBy?: 'senior' | 'caregiver'; // Who entered it (for manual entries)
@@ -206,4 +220,111 @@ export interface ReportNotification {
   period: 'weekly' | 'monthly';
   createdAt: Date;
   read: boolean;
+}
+
+// ===== DOCTOR APPOINTMENTS =====
+export interface DoctorAppointment {
+  id: string;
+  doctorName: string;
+  specialty?: string; // e.g., "Cardiologist", "General Physician"
+  hospitalName?: string;
+  address?: string;
+  phone?: string;
+  date: Date;
+  time: string; // "10:30" - 24hr format
+  purpose?: string; // e.g., "Follow-up", "Blood Test", "Routine Checkup"
+  notes?: string;
+  reminderBefore: number; // Minutes before to remind (e.g., 60 = 1 hour before)
+  status: 'UPCOMING' | 'COMPLETED' | 'CANCELLED' | 'MISSED';
+  createdAt: Date;
+  createdBy: 'senior' | 'caregiver';
+}
+
+// ===== HEALTH LOGS (BP, Sugar, Sleep, Water) =====
+export interface BloodPressureLog {
+  id: string;
+  systolic: number; // e.g., 120
+  diastolic: number; // e.g., 80
+  pulse?: number; // Optional pulse rate
+  timestamp: Date;
+  timeOfDay: 'morning' | 'afternoon' | 'evening' | 'night';
+  notes?: string;
+  enteredBy: 'senior' | 'caregiver';
+}
+
+export interface BloodSugarLog {
+  id: string;
+  value: number; // mg/dL (e.g., 110)
+  measurementType: 'fasting' | 'before_meal' | 'after_meal' | 'random' | 'bedtime';
+  timestamp: Date;
+  notes?: string;
+  enteredBy: 'senior' | 'caregiver';
+}
+
+export interface SleepLog {
+  id: string;
+  date: Date; // The night of sleep (e.g., Jan 5 = night of Jan 5-6)
+  bedTime?: string; // "22:30" when went to bed
+  wakeTime?: string; // "06:30" when woke up
+  duration?: number; // Hours of sleep (auto-calculated or manual)
+  quality: 1 | 2 | 3 | 4 | 5; // 1=Very Poor, 5=Excellent
+  interruptions?: number; // Times woke up during night
+  notes?: string;
+  enteredBy: 'senior' | 'caregiver';
+}
+
+export interface WaterLog {
+  id: string;
+  amount: number; // ml (e.g., 250 for 1 glass)
+  timestamp: Date;
+}
+
+export interface WaterSettings {
+  dailyGoal: number; // ml (e.g., 2000 = 2 liters)
+  reminderInterval: number; // minutes between reminders (e.g., 60)
+  startTime: string; // "07:00" - when to start reminders
+  endTime: string; // "21:00" - when to stop reminders
+  enabled: boolean;
+}
+
+// ===== GEOFENCE =====
+export interface Geofence {
+  id: string;
+  name: string; // e.g., "Home", "Temple", "Park"
+  latitude: number;
+  longitude: number;
+  radius: number; // meters (e.g., 100)
+  type: 'home' | 'safe_zone' | 'restricted';
+  alertOnExit: boolean; // Alert caregiver when senior leaves
+  alertOnEntry?: boolean; // Alert when senior enters (for restricted zones)
+  enabled: boolean;
+  createdAt: Date;
+}
+
+export interface GeofenceEvent {
+  id: string;
+  geofenceId: string;
+  geofenceName: string;
+  eventType: 'EXIT' | 'ENTRY';
+  timestamp: Date;
+  location: {
+    latitude: number;
+    longitude: number;
+  };
+  notifiedCaregivers: string[]; // IDs of caregivers notified
+}
+
+// ===== OFFLINE EMERGENCY DATA =====
+export interface OfflineEmergencyData {
+  contacts: Contact[];
+  seniorProfile: {
+    name: string;
+    phone: string;
+    bloodGroup?: string;
+    allergies?: string[];
+    medicalConditions?: string[];
+    currentMedicines?: string[];
+  };
+  homeAddress?: string;
+  lastSyncedAt: Date;
 }

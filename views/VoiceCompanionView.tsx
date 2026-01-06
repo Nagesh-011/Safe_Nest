@@ -15,6 +15,7 @@ interface VoiceCompanionProps {
   medicineLogs?: MedicineLog[];
   onMarkTaken?: (medicineId: string, scheduledTime: string) => void;
   onSkipMedicine?: (medicineId: string, scheduledTime: string) => void;
+  onSnoozeMedicine?: (medicineId: string, scheduledTime: string, snoozeUntil: string) => void;
 }
 
 export const VoiceCompanionView: React.FC<VoiceCompanionProps> = ({ 
@@ -28,7 +29,8 @@ export const VoiceCompanionView: React.FC<VoiceCompanionProps> = ({
   medicines = [],
   medicineLogs = [],
   onMarkTaken,
-  onSkipMedicine
+  onSkipMedicine,
+  onSnoozeMedicine
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const recognitionRef = useRef<any>(null);
@@ -208,6 +210,7 @@ export const VoiceCompanionView: React.FC<VoiceCompanionProps> = ({
                         medicineLogs={medicineLogs}
                         onMarkTaken={onMarkTaken}
                         onSkip={onSkipMedicine}
+                        onSnooze={onSnoozeMedicine}
                     />
                 </div>
             )}

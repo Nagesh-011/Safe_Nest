@@ -136,6 +136,13 @@ export interface Translations {
   enterValid10Digit: string;
   phoneNumberRequired: string;
   phoneMust10Digits: string;
+  
+  // New Features
+  logWaterIntake: string;
+  stayHydrated: string;
+  upcomingAppointments: string;
+  today: string;
+  tomorrow: string;
 }
 
 // Base English translations - all other languages will be auto-translated
@@ -246,6 +253,13 @@ export const baseTranslations: Translations = {
   enterValid10Digit: 'Please enter a valid 10-digit mobile number',
   phoneNumberRequired: 'Phone number is required',
   phoneMust10Digits: 'Phone number must be exactly 10 digits',
+  
+  // New Features
+  logWaterIntake: 'Log Water Intake',
+  stayHydrated: 'Stay hydrated today!',
+  upcomingAppointments: 'Upcoming Appointments',
+  today: 'Today',
+  tomorrow: 'Tomorrow',
 };
 
 // Static Hindi translations (partial)
@@ -333,6 +347,11 @@ export const staticHindiMap: Partial<Translations> = {
   enterValid10Digit: 'कृपया वैध 10-अंकों का नंबर दर्ज करें',
   phoneNumberRequired: 'मोबाइल नंबर आवश्यक है',
   phoneMust10Digits: 'मोबाइल नंबर 10 अंकों का होना चाहिए',
+  logWaterIntake: 'पानी का सेवन दर्ज करें',
+  stayHydrated: 'आज हाइड्रेटेड रहें!',
+  upcomingAppointments: 'आगामी अपॉइंटमेंट',
+  today: 'आज',
+  tomorrow: 'कल',
 };
 
 // Static Marathi translations (partial)
@@ -419,6 +438,11 @@ export const staticMarathiMap: Partial<Translations> = {
   enterValid10Digit: 'कृपया वैध १० अंकी क्रमांक लिहा',
   phoneNumberRequired: 'मोबाईल क्रमांक आवश्यक आहे',
   phoneMust10Digits: 'मोबाईल क्रमांक १० अंकी असावा',
+  logWaterIntake: 'पाणी नोंदवा',
+  stayHydrated: 'आज हायड्रेटेड राहा!',
+  upcomingAppointments: 'आगामी भेटी',
+  today: 'आज',
+  tomorrow: 'उद्या',
 };
 
 export function buildStaticTranslations(lang: 'en' | 'hi' | 'mr'): Translations {

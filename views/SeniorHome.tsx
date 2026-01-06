@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Heart, Activity, MapPin, Zap, LogOut, Mic, Pill, AlertCircle } from 'lucide-react';
-import { SeniorStatus, UserProfile, Medicine, MedicineLog } from '../types';
+import { Heart, Activity, MapPin, Zap, LogOut, Mic, Pill, AlertCircle, Droplets } from 'lucide-react';
+import { SeniorStatus, UserProfile, Medicine, MedicineLog, DoctorAppointment } from '../types';
 import { MedicineReminders } from './MedicineReminders';
 import { useLanguage } from '../i18n/LanguageContext';
 
@@ -23,6 +23,11 @@ interface SeniorHomeProps {
   medicineLogs?: MedicineLog[];
   onMarkTaken?: (medicineId: string, scheduledTime: string) => void;
   onSkipMedicine?: (medicineId: string, scheduledTime: string) => void;
+  onSnoozeMedicine?: (medicineId: string, scheduledTime: string, snoozeUntil: string) => void;
+  // Water tracker
+  onOpenWaterTracker?: () => void;
+  // Upcoming appointments (read-only)
+  upcomingAppointments?: DoctorAppointment[];
 }
 
 export const SeniorHome: React.FC<SeniorHomeProps> = ({ 
@@ -41,7 +46,10 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
   medicines = [],
   medicineLogs = [],
   onMarkTaken,
-  onSkipMedicine
+  onSkipMedicine,
+  onSnoozeMedicine,
+  onOpenWaterTracker,
+  upcomingAppointments = []
 }) => {
   const { t } = useLanguage();
   
@@ -356,6 +364,61 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
         </div>
       </div>
 
+      {/* Upcoming Appointments (Read-only for Senior) */}
+      {upcomingAppointments.length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">📅 {t.upcomingAppointments}</h2>
+          <div className="space-y-2">
+            {upcomingAppointments.slice(0, 3).map((apt) => {
+              const aptDate = apt.date instanceof Date ? apt.date : new Date(apt.date);
+              const isToday = aptDate.toDateString() === new Date().toDateString();
+              const isTomorrow = aptDate.toDateString() === new Date(Date.now() + 86400000).toDateString();
+              
+              return (
+                <div key={apt.id} className={`bg-white rounded-xl p-4 shadow-sm border ${isToday ? 'border-red-200 bg-red-50' : 'border-gray-100'}`}>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-bold text-gray-900">{apt.doctorName}</p>
+                      <p className="text-sm text-gray-500">{apt.specialty}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className={`font-semibold ${isToday ? 'text-red-600' : 'text-blue-600'}`}>
+                        {isToday ? t.today : isTomorrow ? t.tomorrow : aptDate.toLocaleDateString()}
+                      </p>
+                      <p className="text-sm text-gray-600">{apt.time}</p>
+                    </div>
+                  </div>
+                  {apt.address && (
+                    <p className="text-xs text-gray-400 mt-2">📍 {apt.address}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Water Intake Quick Log */}
+      {onOpenWaterTracker && (
+        <div className="mt-6">
+          <button
+            onClick={onOpenWaterTracker}
+            className="w-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-2xl p-4 shadow-lg flex items-center justify-between active:scale-98 transition-transform"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
+                <Droplets size={24} className="text-white" />
+              </div>
+              <div className="text-left">
+                <p className="text-white font-bold text-lg">{t.logWaterIntake}</p>
+                <p className="text-white/80 text-sm">{t.stayHydrated}</p>
+              </div>
+            </div>
+            <div className="text-white/90 text-2xl">💧</div>
+          </button>
+        </div>
+      )}
+
       {/* Medicine Reminder Card - Direct Actions */}
       {medicines.length > 0 && (
         <div className="mt-6">
@@ -364,6 +427,7 @@ export const SeniorHome: React.FC<SeniorHomeProps> = ({
             medicineLogs={medicineLogs || []}
             onMarkTaken={onMarkTaken || (() => {})}
             onSkip={onSkipMedicine || (() => {})}
+            onSnooze={onSnoozeMedicine}
           />
         </div>
       )}

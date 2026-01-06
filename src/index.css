@@ -4,7 +4,8 @@ body {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  padding-top: env(safe-area-inset-top);
+  /* Safe area insets with fallback for Android status bar (typically 24-30dp) */
+  padding-top: max(env(safe-area-inset-top), 28px);
   padding-bottom: env(safe-area-inset-bottom);
   overscroll-behavior-y: none;
   touch-action: pan-x pan-y;

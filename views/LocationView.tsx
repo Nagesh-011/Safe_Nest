@@ -10,9 +10,10 @@ interface LocationViewProps {
   status: SeniorStatus;
   seniorProfile?: HouseholdMember;
   caregivers?: HouseholdMember[];
+  onBack?: () => void;
 }
 
-export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfile, caregivers = [] }) => {
+export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfile, caregivers = [], onBack }) => {
   const [isPanelExpanded, setIsPanelExpanded] = useState(false);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
   
@@ -231,10 +232,13 @@ export const LocationView: React.FC<LocationViewProps> = ({ status, seniorProfil
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 w-full">
+    <div className="flex flex-col h-screen bg-gray-50 w-full pt-[max(env(safe-area-inset-top),28px)]">
       {/* Top Navbar - Fixed height */}
       <div className="h-24 px-4 py-4 flex items-center justify-between bg-white border-b border-gray-100 shrink-0 z-50">
-        <button className="p-2 bg-gray-100 rounded-full shadow-sm hover:bg-gray-200 transition-colors">
+        <button 
+           onClick={onBack}
+           className="p-2 bg-gray-100 rounded-full shadow-sm hover:bg-gray-200 transition-colors"
+        >
            <svg className="w-6 h-6 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
         

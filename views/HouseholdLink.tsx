@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Home, Link2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Home, Link2, RefreshCw, ShieldCheck, ArrowLeft } from 'lucide-react';
 import { UserRole } from '../types';
 
 interface HouseholdLinkProps {
@@ -8,6 +8,7 @@ interface HouseholdLinkProps {
   existingCode?: string;
   errorMessage?: string;
   isValidating?: boolean;
+  onBack?: () => void;
 }
 
 const randomCode = () => {
@@ -17,7 +18,7 @@ const randomCode = () => {
   return out;
 };
 
-export const HouseholdLink: React.FC<HouseholdLinkProps> = ({ role, onSubmit, existingCode, errorMessage, isValidating }) => {
+export const HouseholdLink: React.FC<HouseholdLinkProps> = ({ role, onSubmit, existingCode, errorMessage, isValidating, onBack }) => {
   const [code, setCode] = useState(existingCode || '');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -36,8 +37,18 @@ export const HouseholdLink: React.FC<HouseholdLinkProps> = ({ role, onSubmit, ex
     : 'Ask the senior for their code and enter it here to link.';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4 sm:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4 sm:p-6 pt-[max(env(safe-area-inset-top),1.5rem)]">
       <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-6 sm:p-8 space-y-6">
+        {/* Back Button */}
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-2"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span className="font-medium">Back</span>
+          </button>
+        )}
         <div className="flex items-start gap-3">
           <div className="p-3 rounded-2xl bg-blue-100 text-blue-700 shrink-0">
             <Home className="w-6 h-6" />
@@ -58,14 +69,16 @@ export const HouseholdLink: React.FC<HouseholdLinkProps> = ({ role, onSubmit, ex
               placeholder="e.g., HOME123"
               maxLength={12}
             />
-            <button
-              type="button"
-              onClick={() => setCode(randomCode())}
-              className=" border-gray-200 rounded-xl text-gray-700 hover:border-blue-500 hover:text-blue-600 flex items-center justify-center gap-2 font-semibold transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Generate Manually
-            </button>
+            {role === UserRole.SENIOR && (
+              <button
+                type="button"
+                onClick={() => setCode(randomCode())}
+                className=" border-gray-200 rounded-xl text-gray-700 hover:border-blue-500 hover:text-blue-600 flex items-center justify-center gap-2 font-semibold transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Generate Manually
+              </button>
+            )}
           </div>
 
           <button
