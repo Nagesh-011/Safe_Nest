@@ -42,10 +42,48 @@ import { sanitizeForLog } from './utils/sanitize';
 import * as googleFitService from './services/googleFit';
 import { backgroundReminders } from './services/backgroundReminders';
 import { offlineEmergency } from './services/offlineEmergency';
+import { isOnline, onStatusChange } from './services/network';
+import { offlineStore, type QueueAction } from './services/offlineStore';
 import { geofenceService } from './services/geofenceService';
 import { waterReminder } from './services/waterReminder';
 
 const normalizePhone = (value: string) => value ? value.replace(/\D/g, '') : '';
+
+// Generic helper: write to Firebase when online, otherwise enqueue for later
+const pushDbUpdate = (path: string, data: any, onSuccess?: () => void) => {
+  if (isOnline()) {
+    set(ref(db, path), data)
+      .then(() => {
+        onSuccess && onSuccess();
+      })
+      .catch((err) => {
+        console.error('[DB] Write failed:', path, err);
+      });
+  } else {
+    console.log('[OfflineQueue] Enqueue update:', path);
+    offlineStore.enqueue({ type: 'dbUpdate', payload: { path, data } });
+    // Optimistically apply local changes
+    onSuccess && onSuccess();
+  }
+};
+
+// Cache helpers for offline reads
+const serializeMedicine = (med: any) => ({
+  ...med,
+  startDate: med.startDate instanceof Date ? med.startDate.toISOString() : med.startDate,
+  endDate: med.endDate ? (med.endDate instanceof Date ? med.endDate.toISOString() : med.endDate) : null,
+  createdAt: med.createdAt instanceof Date ? med.createdAt.toISOString() : med.createdAt,
+  updatedAt: med.updatedAt instanceof Date ? med.updatedAt.toISOString() : med.updatedAt,
+});
+const deserializeMedicine = (med: any) => ({
+  ...med,
+  startDate: new Date(med.startDate),
+  endDate: med.endDate ? new Date(med.endDate) : undefined,
+  createdAt: new Date(med.createdAt),
+  updatedAt: new Date(med.updatedAt),
+});
+const serializeMedicineLog = (log: any) => ({ ...log, date: log.date instanceof Date ? log.date.toISOString() : log.date });
+const deserializeMedicineLog = (log: any) => ({ ...log, date: new Date(log.date) });
 
 // Global widget event queue - register listener at module load time
 let setAppStatusGlobal: ((status: AppStatus) => void) | null = null;
@@ -247,6 +285,39 @@ const App = () => {
   useEffect(() => {
     seniorStatusRef.current = seniorStatus;
   }, [seniorStatus]);
+
+  // Offline queue: flush on startup if online and on reconnect
+  useEffect(() => {
+    const flush = async () => {
+      if (!isOnline()) return;
+      // Generic handler to push queued DB updates
+      const handler = async (action: QueueAction) => {
+        switch (action.type) {
+          case 'dbUpdate': {
+            const { path, data } = action.payload || {};
+            if (!path) {
+              console.warn('[OfflineQueue] Missing path in dbUpdate payload');
+              return;
+            }
+            await set(ref(db, path), data);
+            console.log('[OfflineQueue] Flushed dbUpdate:', path);
+            break;
+          }
+          default:
+            console.log('[OfflineQueue] Unknown action type', action.type);
+        }
+      };
+      const { processed, remaining } = await offlineStore.processQueue(handler);
+      if (processed) console.log(`[OfflineQueue] Processed ${processed}, remaining ${remaining}`);
+    };
+
+    const unsubscribe = onStatusChange((s) => {
+      if (s.online) flush();
+    });
+    // Attempt initial flush
+    flush();
+    return unsubscribe;
+  }, []);
   
   // Voice/Reminder State
   const [isListening, setIsListening] = useState(false);
@@ -1931,6 +2002,18 @@ const App = () => {
       return;
     }
     console.log('[App] Medicines subscription: Listening to household:', householdId);
+    // If offline, load cached medicines
+    if (!isOnline()) {
+      const cached = offlineStore.getCache<any[]>(`medicines_${householdId}`, []);
+      if (cached && cached.length) {
+        const cachedList = cached.map(deserializeMedicine) as Medicine[];
+        console.log('[App] Loaded cached medicines:', cachedList.length);
+        setMedicines(cachedList);
+        if (role === 'senior' && backgroundReminders.isAvailable()) {
+          backgroundReminders.scheduleAllMedicines(cachedList);
+        }
+      }
+    }
     const medicinesRef = ref(db, `households/${householdId}/medicines`);
     const unsub = onValue(medicinesRef, (snapshot) => {
       const data = snapshot.val();
@@ -1945,6 +2028,8 @@ const App = () => {
         })) as Medicine[];
         console.log('[App] Setting medicines:', medicinesList.length, 'items');
         setMedicines(medicinesList);
+        // Cache for offline reads
+        offlineStore.setCache(`medicines_${householdId}`, medicinesList.map(serializeMedicine));
         
         // Schedule background reminders for all medicines (ensures alarms survive app restart)
         if (role === 'senior' && backgroundReminders.isAvailable()) {
@@ -1961,6 +2046,15 @@ const App = () => {
   // Subscribe to medicine logs
   useEffect(() => {
     if (!householdId) return;
+    // If offline, load cached logs
+    if (!isOnline()) {
+      const cached = offlineStore.getCache<any[]>(`medicineLogs_${householdId}`, []);
+      if (cached && cached.length) {
+        const cachedList = cached.map(deserializeMedicineLog) as MedicineLog[];
+        console.log('[App] Loaded cached medicineLogs:', cachedList.length);
+        setMedicineLogs(cachedList);
+      }
+    }
     const logsRef = ref(db, `households/${householdId}/medicineLogs`);
     const unsub = onValue(logsRef, (snapshot) => {
       const data = snapshot.val();
@@ -1971,9 +2065,12 @@ const App = () => {
         })) as MedicineLog[];
         console.log('[App] onValue medicineLogs received, count=', logsList.length);
         setMedicineLogs(logsList);
+        // Cache for offline reads
+        offlineStore.setCache(`medicineLogs_${householdId}`, logsList.map(serializeMedicineLog));
       } else {
         console.log('[App] onValue medicineLogs received: empty');
         setMedicineLogs([]);
+        offlineStore.setCache(`medicineLogs_${householdId}`, []);
       }
     });
     return () => unsub();
@@ -2497,7 +2594,10 @@ const App = () => {
     console.log('[handleDeleteMedicine] Deleting from household:', targetHousehold);
     // Cancel background reminders for this medicine
     backgroundReminders.cancelMedicine(medicineId);
-    set(ref(db, `households/${targetHousehold}/medicines/${medicineId}`), null);
+    const path = `households/${targetHousehold}/medicines/${medicineId}`;
+    pushDbUpdate(path, null, () => {
+      setMedicines(prev => prev.filter(m => m.id !== medicineId));
+    });
   };
 
   const handleMarkTaken = (medicineId: string, scheduledTime: string) => {
@@ -2555,33 +2655,25 @@ const App = () => {
     };
 
     console.log('[handleMarkTaken] Writing log to household:', targetHousehold, logForDB);
-    set(ref(db, `households/${targetHousehold}/medicineLogs/${logId}`), logForDB)
-      .then(() => {
-        console.log('[handleMarkTaken] Write success:', logId);
-        // Push a Date instance into local state for consistent behavior
-        setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
-        
-        // Cancel any pending missed medicine follow-up notifications (native)
-        backgroundReminders.markMedicineTaken(medicineId, normalizedScheduled);
-        
-        // Auto-decrement remaining quantity if refill tracking is enabled
-        if (medicine.remainingQuantity !== undefined && medicine.remainingQuantity > 0) {
-          const newRemaining = medicine.remainingQuantity - 1;
-          console.log('[handleMarkTaken] Decrementing remaining quantity:', medicine.remainingQuantity, '->', newRemaining);
-          set(ref(db, `households/${targetHousehold}/medicines/${medicineId}/remainingQuantity`), newRemaining)
-            .then(() => {
-              console.log('[handleMarkTaken] Remaining quantity updated');
-              // Update local state
-              setMedicines(prev => prev.map(m => 
-                m.id === medicineId ? { ...m, remainingQuantity: newRemaining } : m
-              ));
-            })
-            .catch((err) => console.error('[handleMarkTaken] Failed to update remaining quantity:', err));
-        }
-      })
-      .catch((err) => {
-        console.error('[handleMarkTaken] Write failed:', err);
-      });
+    const logPath = `households/${targetHousehold}/medicineLogs/${logId}`;
+    pushDbUpdate(logPath, logForDB, () => {
+      console.log('[handleMarkTaken] Write success (online or queued):', logId);
+      setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
+      // Cancel any pending missed medicine follow-up notifications (native)
+      backgroundReminders.markMedicineTaken(medicineId, normalizedScheduled);
+      // Auto-decrement remaining quantity if refill tracking is enabled
+      if (medicine.remainingQuantity !== undefined && medicine.remainingQuantity > 0) {
+        const newRemaining = medicine.remainingQuantity - 1;
+        console.log('[handleMarkTaken] Decrementing remaining quantity:', medicine.remainingQuantity, '->', newRemaining);
+        const qtyPath = `households/${targetHousehold}/medicines/${medicineId}/remainingQuantity`;
+        pushDbUpdate(qtyPath, newRemaining, () => {
+          console.log('[handleMarkTaken] Remaining quantity updated (online or queued)');
+          setMedicines(prev => prev.map(m => 
+            m.id === medicineId ? { ...m, remainingQuantity: newRemaining } : m
+          ));
+        });
+      }
+    });
   };
 
   const handleSkipMedicine = (medicineId: string, scheduledTime: string, markAsMissed: boolean = false) => {
@@ -2635,14 +2727,11 @@ const App = () => {
       date: isoDate,
     };
     console.log('[handleSkipMedicine] Writing log to household:', targetHousehold, logForDB);
-    set(ref(db, `households/${targetHousehold}/medicineLogs/${logId}`), logForDB)
-      .then(() => {
-        console.log('[handleSkipMedicine] Write success:', logId);
-        setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
-      })
-      .catch((err) => {
-        console.error('[handleSkipMedicine] Write failed:', err);
-      });
+    const logPath = `households/${targetHousehold}/medicineLogs/${logId}`;
+    pushDbUpdate(logPath, logForDB, () => {
+      console.log('[handleSkipMedicine] Write success (online or queued):', logId);
+      setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
+    });
   };
 
   const handleSnoozeMedicine = (medicineId: string, scheduledTime: string, snoozeUntil: string) => {
@@ -2699,14 +2788,11 @@ const App = () => {
       date: isoDate,
     };
     console.log('[handleSnoozeMedicine] Writing log to household:', targetHousehold, logForDB);
-    set(ref(db, `households/${targetHousehold}/medicineLogs/${logId}`), logForDB)
-      .then(() => {
-        console.log('[handleSnoozeMedicine] Write success:', logId);
-        setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
-      })
-      .catch((err) => {
-        console.error('[handleSnoozeMedicine] Write failed:', err);
-      });
+    const logPath = `households/${targetHousehold}/medicineLogs/${logId}`;
+    pushDbUpdate(logPath, logForDB, () => {
+      console.log('[handleSnoozeMedicine] Write success (online or queued):', logId);
+      setMedicineLogs(prev => [...prev, { ...logForDB, date: new Date(isoDate) } as MedicineLog]);
+    });
   };
 
   // Vitals handler
@@ -2738,14 +2824,11 @@ const App = () => {
     if (vital.diastolic !== undefined) vitalForDB.diastolic = vital.diastolic;
     
     console.log('[handleAddVital] Writing vital to household:', targetHousehold, vitalForDB);
-    set(ref(db, `households/${targetHousehold}/vitals/${vitalId}`), vitalForDB)
-      .then(() => {
-        console.log('[handleAddVital] Write success:', vitalId);
-        setVitalReadings(prev => [...prev, vitalWithId]);
-      })
-      .catch((err) => {
-        console.error('[handleAddVital] Write failed:', err);
-      });
+    const path = `households/${targetHousehold}/vitals/${vitalId}`;
+    pushDbUpdate(path, vitalForDB, () => {
+      console.log('[handleAddVital] Write success (online or queued):', vitalId);
+      setVitalReadings(prev => [...prev, vitalWithId]);
+    });
   };
 
   // ===== HEALTH LOGS HANDLERS =====
@@ -2757,10 +2840,9 @@ const App = () => {
     const logWithId: BloodPressureLog = { ...log, id: logId };
     const logForDB = { ...logWithId, timestamp: log.timestamp.toISOString() };
     
-    set(ref(db, `households/${targetHousehold}/bpLogs/${logId}`), logForDB)
-      .then(() => {
-        setBpLogs(prev => [logWithId, ...prev]);
-      });
+    pushDbUpdate(`households/${targetHousehold}/bpLogs/${logId}`, logForDB, () => {
+      setBpLogs(prev => [logWithId, ...prev]);
+    });
   };
 
   const handleAddSugarLog = (log: Omit<BloodSugarLog, 'id'>) => {
@@ -2771,10 +2853,9 @@ const App = () => {
     const logWithId: BloodSugarLog = { ...log, id: logId };
     const logForDB = { ...logWithId, timestamp: log.timestamp.toISOString() };
     
-    set(ref(db, `households/${targetHousehold}/sugarLogs/${logId}`), logForDB)
-      .then(() => {
-        setSugarLogs(prev => [logWithId, ...prev]);
-      });
+    pushDbUpdate(`households/${targetHousehold}/sugarLogs/${logId}`, logForDB, () => {
+      setSugarLogs(prev => [logWithId, ...prev]);
+    });
   };
 
   const handleAddSleepLog = (log: Omit<SleepLog, 'id'>) => {
@@ -2785,10 +2866,9 @@ const App = () => {
     const logWithId: SleepLog = { ...log, id: logId };
     const logForDB = { ...logWithId, date: log.date.toISOString() };
     
-    set(ref(db, `households/${targetHousehold}/sleepLogs/${logId}`), logForDB)
-      .then(() => {
-        setSleepLogs(prev => [logWithId, ...prev]);
-      });
+    pushDbUpdate(`households/${targetHousehold}/sleepLogs/${logId}`, logForDB, () => {
+      setSleepLogs(prev => [logWithId, ...prev]);
+    });
   };
 
   // ===== DOCTOR APPOINTMENT HANDLERS =====
@@ -2821,12 +2901,11 @@ const App = () => {
       createdAt: aptWithId.createdAt.toISOString()
     };
     
-    set(ref(db, `households/${targetHousehold}/appointments/${aptId}`), aptForDB)
-      .then(() => {
-        setDoctorAppointments(prev => [aptWithId, ...prev]);
-        // Schedule notification for the appointment
-        scheduleAppointmentNotification(aptWithId);
-      });
+    pushDbUpdate(`households/${targetHousehold}/appointments/${aptId}`, aptForDB, () => {
+      setDoctorAppointments(prev => [aptWithId, ...prev]);
+      // Schedule notification for the appointment
+      scheduleAppointmentNotification(aptWithId);
+    });
   };
 
   const handleUpdateAppointment = (id: string, updates: Partial<DoctorAppointment>) => {
@@ -2843,13 +2922,12 @@ const App = () => {
       createdAt: updated.createdAt instanceof Date ? updated.createdAt.toISOString() : updated.createdAt
     };
     
-    set(ref(db, `households/${targetHousehold}/appointments/${id}`), updatedForDB)
-      .then(() => {
-        setDoctorAppointments(prev => prev.map(a => a.id === id ? updated : a));
-        // Reschedule notification with updated details
-        cancelAppointmentNotification(id);
-        scheduleAppointmentNotification(updated);
-      });
+    pushDbUpdate(`households/${targetHousehold}/appointments/${id}`, updatedForDB, () => {
+      setDoctorAppointments(prev => prev.map(a => a.id === id ? updated : a));
+      // Reschedule notification with updated details
+      cancelAppointmentNotification(id);
+      scheduleAppointmentNotification(updated);
+    });
   };
 
   const handleDeleteAppointment = (id: string) => {
@@ -2859,10 +2937,9 @@ const App = () => {
     // Cancel the notification first
     cancelAppointmentNotification(id);
     
-    set(ref(db, `households/${targetHousehold}/appointments/${id}`), null)
-      .then(() => {
-        setDoctorAppointments(prev => prev.filter(a => a.id !== id));
-      });
+    pushDbUpdate(`households/${targetHousehold}/appointments/${id}`, null, () => {
+      setDoctorAppointments(prev => prev.filter(a => a.id !== id));
+    });
   };
 
   const handleSwitchHousehold = (newHouseholdId: string) => {

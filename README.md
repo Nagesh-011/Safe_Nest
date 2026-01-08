@@ -1,236 +1,128 @@
-# 🛡️ SafeNest - Senior Safety & Emergency Detection App
+# 🛡️ SafeNest - Senior Safety & Emergency App
 
-🚨 SafeNest is an intelligent mobile application designed to detect falls and provide emergency assistance for seniors. It combines AI-powered fall detection with real-time caregiver coordination and emergency response capabilities.
+SafeNest keeps seniors safe with fall detection, emergency escalation, reliable medicine reminders (exact alarms), and offline-first caregiving flows.
 
-## 📥 Download APK
+## 📥 Download / Build
 
-**📱 Latest Release:** [Download SafeNest APK v1.0.0](https://github.com/omkale18-dev/Safe_Nest/releases/tag/v1.0.0) *(4.06 MB)*
+- Latest dev build: generate locally via `npm run android:build` (output: `android/app/build/outputs/apk/debug/app-debug.apk`).
+- Release build: `npm run build && npx cap sync && cd android && gradlew.bat assembleRelease` then sign `app-release-unsigned.apk` with your keystore.
+- Install on device: enable “Install from unknown sources”, copy the APK, install, and grant permissions (location, notifications, exact alarms on Android 12+).
 
+## ✨ Features (current)
 
-**Installation Instructions:**
-- Enable "Install from Unknown Sources" in Android settings
-- Download and install the APK
-- Grant all required permissions (Location, Sensors, Notifications)
-
-## ✨ Features
-
-### 🎯 **Intelligent Fall Detection**
-- 📡 Real-time accelerometer monitoring (40 m/s² threshold)
-- ⏱️ 5-second cooldown to prevent false positives
-- 🤖 Native Android service with web fallback support
-
-### 🆘 **Emergency Response System**
-- 🚨 Automated emergency alerts to caregivers
-- ⏰ 60-second countdown before alert (can be cancelled)
-- 📞 Direct call to emergency services (102 - India)
-- 🎤 Voice-based emergency activation
-
-### 🌍 **Multi-Language Support**
-- 🇬🇧 English
-- 🇮🇳 Hindi (हिंदी)
-- 🇮🇳 Marathi (मराठी)
-
-### 👨‍⚕️ **Caregiver Dashboard**
-- 📍 Real-time location tracking
-- 📊 Activity history and vital signs monitoring
-- ⚡ Quick emergency response
-- 👪 Household member management
-
-### 🔧 **Technical Capabilities**
-- 🔄 Foreground service for continuous monitoring
-- ☁️ Firebase Firestore for real-time data sync
-- 🔔 Push notifications via FCM
-- 📱 Responsive web UI with mobile optimization
+- Offline-first actions: local cache + queued writes for medicines, vitals, health logs, and appointments; auto-flush on reconnect.
+- Medicine reminders: exact-alarm permission banner, background reminders, snooze/skip/taken flows, refill tracking, caregiver alerts for missed doses.
+- Fall detection: native monitoring with cooldown, countdown UX, and caregiver notifications.
+- Emergency system: SOS countdown, lock-screen shortcut/widget handling, voice emergency trigger, direct call handoff.
+- Caregiver dashboard: multi-household support, medicine logs, vitals, location/status, alerts, and notifications.
+- Geofence & water reminders: background geofence initialization and hydration nudges for seniors.
+- Multi-language: English, Hindi, Marathi with runtime switching.
 
 ## 🛠️ Tech Stack
 
-| Component | Version | Icon |
-|-----------|---------|------|
-| **Frontend** | React 19.2.3, TypeScript 5.8.2 | ⚛️ |
-| **Build Tool** | Vite 6.2.0 | ⚡ |
-| **Mobile Bridge** | Capacitor 8.0.0 | 📱 |
-| **Backend** | Firebase 12.6.0 (Firestore, Auth, FCM) | 🔥 |
-| **UI Framework** | Tailwind CSS | 🎨 |
-| **Android SDK** | Target 36, Min API 24 (Android 7.0+) | 🤖 |
-| **Build System** | Gradle 8.14.3 | 🏗️ |
+| Component | Version |
+|-----------|---------|
+| React + TS | React 19.2.3, TypeScript 5.8.2 |
+| Build Tool | Vite 6.2.0 |
+| Mobile Bridge | Capacitor 8.0.0 (Android/iOS) |
+| Backend | Firebase 12.6.0 (Realtime DB, Auth, Messaging) |
+| Notifications | @capacitor/local-notifications 8.0.0 |
+| Android | Gradle 8.14.x, Target 36, Min 24 |
 
 ## 📦 Installation & Setup
 
-### 📋 Prerequisites
-- 🟢 Node.js 18+ and npm
-- 🤖 Android SDK (for Android builds)
-- 🔀 Git
+### Prerequisites
+- Node.js 18+
+- Android SDK (for APK builds)
+- Git
 
-### 💻 Local Development
-
-1. **📥 Clone the repository:**
+### Local Development
 ```bash
 git clone https://github.com/yourusername/safenest.git
 cd safenest
-```
-
-2. **📦 Install dependencies:**
-```bash
-npm install --legacy-peer-deps
-```
-
-3. **🚀 Start development server:**
-```bash
+npm install
 npm run dev
-```
-The app will be available at `http://localhost:5173` 🌐
-
-### 🏗️ Build for Production
-
-**🌐 Web build:**
-```bash
-npm run build
+# visit http://localhost:5173
 ```
 
-**📱 Android APK:**
+### Android builds
 ```bash
-npm run build
-npx cap copy
-npx cap open android
-```
+# Sync web -> native
+npm run sync
 
-Then build in Android Studio or via Gradle:
-```bash
-./gradlew assembleRelease
-# 🔐 Sign with keystore
-apksigner sign --ks safenest.keystore --ks-pass pass:YOUR_PASSWORD \\
-  --ks-key-alias safenest --key-pass pass:YOUR_PASSWORD \\
-  --out SafeNest-release-signed.apk app-release-unsigned.apk
+# Debug APK
+npm run android:build
+# or open in Android Studio
+npm run android
+
+# Release (unsigned)
+
+cd android && gradlew.bat assembleRelease
+# then sign app-release-unsigned.apk with apksigner/jarsigner
 ```
 
 ## 📂 Project Structure
 
 ```
 safenest/
-├── src/
-│   ├── components/       # Reusable UI components
-│   ├── views/           # App pages/screens
-│   ├── services/        # Firebase, fall detection, voice
-│   ├── hooks/           # Custom React hooks (sensors)
-│   ├── i18n/            # Translations (English, Hindi, Marathi)
-│   ├── android/         # Native Android code
-│   └── public/          # Static assets
-├── functions/           # Firebase Cloud Functions
-├── package.json         # Dependencies
-└── vite.config.ts       # Vite configuration
+├── App.tsx                 # Main app wiring, offline queue, banners
+├── components/             # UI components
+├── views/                  # Screens (Senior, Caregiver, SOS, etc.)
+├── services/               # Firebase, reminders, fall detection, offline store, network
+├── hooks/                  # Sensors and app utilities
+├── i18n/                   # Language context and translations
+├── utils/                  # Helpers (sanitize, etc.)
+├── public/                 # Static assets
+├── android/                # Capacitor Android project
+├── ios/                    # Capacitor iOS project
+└── package.json
 ```
 
 ## 🔑 Key Components
 
-### 🎯 Fall Detection Service (`services/fallDetection.ts`)
-- 📡 Monitors device accelerometer continuously
-- ⚡ Triggers alerts when acceleration exceeds 40 m/s²
-- ⏱️ Implements 5-second cooldown to prevent false triggers
-- 📤 Sends notifications to caregivers
-
-### 🆘 Emergency Response (`views/EmergencyActive.tsx`)
-- 🚨 Displays active emergency state
-- 📞 One-tap call to 102 (emergency services)
-- 📊 Caregiver notification tracking
-- ❌ Cancel option for false alarms
-
-### 🌍 Multi-Language Support (`i18n/translations.ts`)
-- 🗣️ Complete translations for English, Hindi, Marathi
-- 💬 Context-based translation strings
-- 🔄 Real-time language switching
-
-## 📞 Emergency Contacts
-
-**🇮🇳 India:** 102 (Police/Emergency Services)
-- ☎️ Automatically calls 102 when emergency button is tapped
-- 👨‍⚕️ Caregiver receives simultaneous notification
+- Offline queue & cache: `services/offlineStore.ts` with `processQueue` flush on reconnect in [App.tsx](App.tsx#L252-L279).
+- Network awareness: `services/network.ts` lightweight online/offline detection.
+- Medicine reminders: `services/backgroundReminders.ts` plus exact-alarm permission banner in [App.tsx](App.tsx#L120-L152) and medicine handlers offline-enabled in [App.tsx](App.tsx#L2532-L2744).
+- Fall detection: `services/fallDetection.ts` native integration with alerts and cooldown.
+- Emergency flows: `views/FallCountdown.tsx`, `views/SOSCountdown.tsx`, `views/EmergencyActive.tsx`, and widget/lock-screen handlers.
+- Geofence + water reminders: initialized for seniors in [App.tsx](App.tsx#L2259-L2285).
 
 ## ⚙️ Configuration
 
-### 🔥 Firebase Setup
-1. 🌐 Create a Firebase project at [console.firebase.google.com](https://console.firebase.google.com)
-2. 🤖 Add Android app and download `google-services.json`
-3. 📂 Place in `android/app/` directory
-4. 🔐 Configure Firestore security rules for real-time sync
+### Firebase (Realtime DB)
+1. Create a Firebase project and add an Android app.
+2. Download `google-services.json` into `android/app/`.
+3. Enable Realtime Database, Auth, and Cloud Messaging; set appropriate DB rules.
 
-### 🔐 Environment Variables
-Create `.env.local` in project root:
-```env
-VITE_FIREBASE_API_KEY=your_api_key
-VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain
-VITE_FIREBASE_PROJECT_ID=your_project_id
-VITE_FIREBASE_STORAGE_BUCKET=your_storage_bucket
-VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-VITE_FIREBASE_APP_ID=your_app_id
+### Environment variables
+Create `.env.local` in the root:
+```
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_PROJECT_ID=...
+VITE_FIREBASE_STORAGE_BUCKET=...
+VITE_FIREBASE_MESSAGING_SENDER_ID=...
+VITE_FIREBASE_APP_ID=...
 ```
 
-## 🔒 Security Considerations
+## 🔒 Permissions Notes
 
-- 🔐 **Keystore Protection:** `safenest.keystore` is NOT committed (add to .gitignore)
-- 🔑 **API Keys:** Use .env.local for sensitive configuration
-- 🛡️ **Firebase Rules:** Implement proper Firestore security rules
-- 🚫 **Google Services:** Keep `google-services.json` local only
-
-## ⚡ Performance Metrics
-
-- ⏱️ **Build Time:** ~8.7 seconds (Vite)
-- 📦 **JS Bundle Size:** 707.10 KB (177.73 KB gzipped)
-- 📱 **APK Size:** 4.06 MB (release, signed)
-- 🚀 **Fall Detection Latency:** < 100ms
-- 💾 **Service Memory:** ~15-20 MB baseline
-
-## ⚠️ Known Limitations
-
-- 📊 Fall detection accuracy varies based on device accelerometer quality
-- 🔄 Requires continuous foreground service for optimal detection
-- 🎤 Voice detection works best in quiet environments
-- 📍 Location tracking requires precise GPS coordinates
+- Exact alarms (Android 12+): the in-app banner opens system settings; grant to ensure reliable medicine reminders.
+- Notifications: required for caregiver alerts, reminders, and emergencies.
+- Location: used for geofence and caregiver visibility.
 
 ## 🔧 Troubleshooting
 
-### 💥 App Crashes on Launch
-- ✅ Ensure all permissions are granted (Android 12+ requires runtime permissions)
-- 🔥 Check that Firebase is properly configured
-- 🤖 Verify Android SDK version compatibility
-
-### ⚠️ Fall Detection Not Working
-- 🏥 Check if "Health" permissions are granted (Android 13+)
-- 🔄 Ensure foreground service is active
-- 🧪 Test with a 40 m/s² acceleration (about 4G)
-
-### 🚫 Build Failures
-- 📦 Run `npm install --legacy-peer-deps` to resolve Firebase version conflicts
-- 🧹 Clear Android build: `./gradlew clean`
-- 🔄 Delete node_modules and reinstall if dependency issues persist
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-1. 🍴 Fork the repository
-2. 🌿 Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. 💾 Commit changes (`git commit -m 'Add amazing feature'`)
-4. 📤 Push to branch (`git push origin feature/amazing-feature`)
-5. 🔀 Open a Pull Request
+- Exact alarms banner does nothing: reopen the app and tap the banner; some OEMs require the “Allow exact alarms” toggle under App Info → Alarms & reminders.
+- Reminders not firing offline: ensure the medicine was scheduled once online; background reminders persist but syncing logs needs connectivity to flush the queue.
+- Build errors: run `npm install`, `npm run sync`, then `cd android && gradlew.bat clean assembleDebug`.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see LICENSE file for details.
+MIT License (see LICENSE).
 
-## 📞 Contact & Support
+## 📅 Status
 
-- 📧 **Email:** support@safenest.app
-- 🐛 **Issues:** [GitHub Issues](https://github.com/yourusername/safenest/issues)
-- 💬 **Discussions:** [GitHub Discussions](https://github.com/yourusername/safenest/discussions)
-
-## 🙏 Acknowledgments
-
-- ⚡ Capacitor team for excellent mobile bridge
-- 🔥 Firebase for backend infrastructure
-- ⚛️ React and TypeScript communities
-- 🎨 UI icons from Lucide React
-
----
-
-**📅 Last Updated:** December 2024
-**✅ Status:** Production Ready
-**🏷️ Version:** 1.0.0
+- Last updated: January 2026
+- Current focus: offline-first sync for medicines, vitals, and caregiver alerts
+- ⏱️ Implements 5-second cooldown to prevent false triggers
