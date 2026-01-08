@@ -318,7 +318,7 @@ class GeofenceService {
             : `Senior has entered ${geofence.name}.`,
           schedule: { at: new Date(Date.now() + 500) },
           sound: isExit ? 'alert.wav' : 'notification.wav',
-          smallIcon: 'ic_location',
+          smallIcon: 'ic_launcher',
           channelId: isExit ? 'critical_alerts' : 'location_updates',
         }]
       });

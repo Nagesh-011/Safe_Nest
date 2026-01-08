@@ -236,8 +236,8 @@ class WaterReminderService {
             at: new Date(Date.now() + 1000), // Show in 1 second
           },
           sound: 'water_drop.wav',
-          smallIcon: 'ic_water',
-          largeIcon: 'ic_water',
+          smallIcon: 'ic_launcher',
+          largeIcon: 'ic_launcher',
         }]
       });
     } catch (error) {

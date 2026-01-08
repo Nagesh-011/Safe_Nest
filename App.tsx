@@ -22,6 +22,8 @@ import { useAppSensors } from './hooks/useAppSensors';
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications, PermissionStatus as LNPermissionStatus } from '@capacitor/local-notifications';
 import { FirstTimeSetup } from './views/FirstTimeSetup';
+import { OnboardingScreen } from './views/OnboardingScreen';
+import { SplashScreen } from './views/SplashScreen';
 import { db, initializeAuth } from './services/firebase';
 import { ref, set, onValue, off, get } from 'firebase/database';
 import { HouseholdLink } from './views/HouseholdLink';
@@ -123,6 +125,17 @@ const App = () => {
       window.removeEventListener('widgetSOS', handleWidgetSOSEarly);
     };
   }, []);
+
+  // Show splash screen on app start
+  const [showSplash, setShowSplash] = useState<boolean>(true);
+
+  // Check if user has completed onboarding intro screens
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    const onboardingComplete = localStorage.getItem('safenest_onboarding_complete');
+    const savedProfile = localStorage.getItem('safenest_user_profile');
+    // Show onboarding only if not completed AND no profile exists
+    return !onboardingComplete && !savedProfile;
+  });
 
   // Check if user has completed setup
   const [isFirstTime, setIsFirstTime] = useState<boolean>(() => {
@@ -734,7 +747,7 @@ const App = () => {
                         title: `💊 Medication Time: ${dueReminder.title}`,
                         body: `${dueReminder.instructions || 'Time to take your medicine'}`,
                         sound: 'default',
-                        smallIcon: 'ic_stat_name',
+                        smallIcon: 'ic_launcher',
                         channelId: associatedMedicine?.isCritical ? 'critical_medicine' : 'medicine_reminders',
                         actionTypeId: associatedMedicine ? 'MEDICINE_REMINDER' : undefined,
                         extra: associatedMedicine ? {
@@ -1244,8 +1257,8 @@ const App = () => {
             doctorName: apt.doctorName,
             time: apt.time,
           },
-          smallIcon: 'ic_notification',
-          largeIcon: 'ic_notification',
+          smallIcon: 'ic_launcher',
+          largeIcon: 'ic_launcher',
         }]
       });
 
@@ -1805,7 +1818,7 @@ const App = () => {
                     body: `${data.userId || 'Senior'} needs help! Status: ${newStatus}`,
                     sound: 'default',
                     channelId: 'emergency_alerts_v2',
-                    smallIcon: 'ic_stat_name',
+                    smallIcon: 'ic_launcher',
                     actionTypeId: 'EMERGENCY',
                     largeBody: `Location: ${data.location?.address || 'Tracking...'}\nHeart Rate: ${data.heartRate} bpm\nBattery: ${data.batteryLevel}%`
                   }]
@@ -2879,10 +2892,12 @@ const App = () => {
       localStorage.removeItem('safenest_household_ids');
       localStorage.removeItem('safenest_active_household');
       localStorage.removeItem('safenest_senior_status');
+      localStorage.removeItem('safenest_onboarding_complete');
     } catch {}
 
     setRole(null);
     setIsFirstTime(true);
+    setShowOnboarding(true);
     setHouseholdId('');
     setHouseholdIds([]);
     setActiveHouseholdId('');
@@ -2987,10 +3002,30 @@ const App = () => {
                         !isEditingProfile &&
                         !showWaterTracker &&
                         !isFirstTime &&
+                        !showOnboarding &&
+                        !showSplash &&
                         householdId; // Don't show nav if household not set up yet
 
   // Render ONLY the active view (Nav bar is handled separately)
   const renderCurrentView = () => {
+    // Show splash screen first
+    if (showSplash) {
+      return (
+        <SplashScreen 
+          onComplete={() => setShowSplash(false)}
+        />
+      );
+    }
+
+    // Show onboarding intro screens for new users
+    if (showOnboarding) {
+      return (
+        <OnboardingScreen 
+          onComplete={() => setShowOnboarding(false)}
+        />
+      );
+    }
+
     // Show first-time setup only on initial app load (new user)
     if (isJoiningAnother && role === UserRole.CAREGIVER) {
       return (
@@ -3217,35 +3252,33 @@ const App = () => {
 
   return (
     <div className="min-h-screen w-full bg-white flex flex-col font-sans text-gray-900">
-           {/* Alarm Permission Warning Banner */}
+           {/* Alarm Permission Warning Banner - SIMPLIFIED */}
            {showAlarmPermissionWarning && (
-             <div className="bg-amber-500 text-white px-4 py-3 flex items-center justify-between" style={{ paddingTop: 'max(env(safe-area-inset-top), 12px)' }}>
-               <div className="flex items-center gap-2 flex-1">
-                 <span className="text-xl">⚠️</span>
-                 <div className="text-sm">
-                   <p className="font-semibold">Medicine reminders may not work</p>
-                   <p className="text-xs opacity-90">Tap to enable exact alarms permission</p>
-                 </div>
-               </div>
+             <div 
+               className="bg-amber-500 text-white p-4 w-full"
+             >
+               <p className="font-semibold mb-2">⚠️ Medicine reminders may not work</p>
+               <p className="text-xs mb-3 opacity-90">Please enable exact alarms permission in settings.</p>
                <div className="flex gap-2">
                  <button
                    onClick={async () => {
+                     console.log('Button clicked!');
+                     alert('Opening Settings...');
                      await backgroundReminders.requestExactAlarmPermission();
-                     // Re-check after a delay (user may have enabled it)
                      setTimeout(async () => {
-                       const canSchedule = await backgroundReminders.canScheduleExactAlarms();
-                       if (canSchedule) setShowAlarmPermissionWarning(false);
-                     }, 1000);
+                       const can = await backgroundReminders.canScheduleExactAlarms();
+                       if (can) setShowAlarmPermissionWarning(false);
+                     }, 2000);
                    }}
-                   className="bg-white text-amber-600 px-3 py-1 rounded text-sm font-medium"
+                   className="bg-white text-amber-600 px-4 py-2 rounded font-medium text-sm"
                  >
-                   Enable
+                   Open Settings
                  </button>
                  <button
                    onClick={() => setShowAlarmPermissionWarning(false)}
-                   className="text-white/80 hover:text-white px-2"
+                   className="bg-amber-600 text-white px-4 py-2 rounded font-medium text-sm"
                  >
-                   ✕
+                   Dismiss
                  </button>
                </div>
              </div>

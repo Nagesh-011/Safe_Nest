@@ -102,7 +102,7 @@ export const showLockScreenSOSButton = async () => {
         ongoing: true, // Makes it persistent (can't be swiped away)
         autoCancel: false,
         channelId: 'lock_screen_sos',
-        smallIcon: 'ic_stat_name',
+        smallIcon: 'ic_launcher',
         actionTypeId: 'LOCK_SCREEN_SOS',
         extra: {
           type: 'lock_screen_sos_button',
