@@ -3302,6 +3302,7 @@ const App = () => {
             <SeniorHome 
               status={seniorStatus} 
               isFitConnected={isFitConnected}
+              vitalReadings={vitalReadings}
               userProfile={currentUser}
               onSignOut={handleSignOut}
               householdId={householdId}
