@@ -1,6 +1,6 @@
 # 🛡️ SafeNest - Senior Safety & Emergency App
 
-SafeNest keeps seniors safe with fall detection, emergency escalation, reliable medicine reminders (exact alarms), and offline-first caregiving flows.
+**Product overview:** SafeNest helps seniors stay safe at home by detecting falls, guiding them through SOS flows, and keeping medicine schedules reliable—even without internet—while caregivers get timely alerts and context to act. Built for senior simplicity and caregiver trust, the app remains usable offline and syncs when connectivity returns.
 
 ## 📥 Download / Build
 
@@ -17,6 +17,50 @@ SafeNest keeps seniors safe with fall detection, emergency escalation, reliable 
 - Caregiver dashboard: multi-household support, medicine logs, vitals, location/status, alerts, and notifications.
 - Geofence & water reminders: background geofence initialization and hydration nudges for seniors.
 - Multi-language: English, Hindi, Marathi with runtime switching.
+
+## 🧭 How to Use the App (first run)
+
+1) Install the APK, open the app, and complete the brief onboarding.
+2) Add a caregiver contact (name and phone) so alerts have a destination.
+3) Grant permissions when prompted: notifications, exact alarms (Android 12+), and location (for geofence/help context).
+4) Set or confirm medicines and reminder times; background reminders will schedule automatically.
+5) If a fall is detected or SOS is triggered, the senior sees a countdown; caregivers get notifications and can view status/med logs. Offline actions are queued and sync when back online.
+
+## 🎥 Demo Assets
+
+- Screenshot 1: Home/Senior dashboard (placeholder: add image link here)
+- Screenshot 2: SOS countdown and alert state (placeholder: add image link here)
+- Screenshot 3: Medicine reminder banner with exact-alarm prompt (placeholder: add image link here)
+- Optional video demo (Loom/YouTube): add link here
+
+## 👥 User Roles
+
+- Senior: Runs the app on-device, receives reminders, can trigger SOS/voice emergency, and views simple status.
+- Caregiver: Receives alerts/notifications, reviews medicine logs, vitals, and household status; can switch households if caring for multiple seniors.
+- Household switching (caregiver): Multi-household listeners surface status, meds, and logs per household.
+
+## 🌟 Core Differentiators
+
+- Offline-first reliability: cached reads + queued writes for meds, vitals, and logs, with auto-flush on reconnect.
+- Exact-alarm aware reminders: in-app banner to open system settings for reliable medication alarms on Android 12+.
+- Real-time escalation chain: SOS/fall countdown with caregiver notifications and background missed-dose alerts.
+- Multi-language accessibility: English, Hindi, Marathi with runtime switching.
+- Background helpers: geofence monitoring, hydration nudges, and lock-screen/widget SOS handling.
+
+## ⚠️ Risks / Limitations
+
+- Fall detection can produce false positives/negatives depending on device sensors and OEM power policies.
+- iOS sensor access and background execution are more limited; Android has the best experience.
+- No HIPAA/GDPR guarantees; intended for personal/caregiver use with standard Firebase rules.
+- Reminders on heavily restricted OEMs may be “best effort” without granting exact alarms/battery exemptions.
+- Connectivity is required to sync logs/alerts; offline actions queue but caregivers only see updates after sync.
+
+## 🔒 Safety & Data Considerations
+
+- Data store: Firebase Realtime Database and Auth; offline cache lives on-device (localStorage).
+- Access: Caregivers see only households they’re linked to; seniors operate their own device profile.
+- Permissions: Exact alarms for reliable meds; notifications for alerts; location for geofence/help context.
+- Connectivity loss: Actions queue locally; reminders continue if scheduled; sync resumes on reconnect.
 
 ## 🛠️ Tech Stack
 
@@ -126,3 +170,16 @@ MIT License (see LICENSE).
 - Last updated: January 2026
 - Current focus: offline-first sync for medicines, vitals, and caregiver alerts
 - ⏱️ Implements 5-second cooldown to prevent false triggers
+
+## 🗺️ Roadmap
+
+**Completed**
+- Offline queue/cache for medicines, vitals, logs, appointments with auto-flush on reconnect
+- Exact-alarm permission banner and background medicine reminders
+- SOS/fall countdown flows with caregiver notifications
+- Multi-language (English/Hindi/Marathi) and caregiver multi-household support
+
+**In-progress / Stretch**
+- Broader offline caching (contacts, reminders, appointments media)
+- Additional device/OEM hardening for alarms on restrictive power modes
+- Expanded safety reporting and caregiver audit/history views
